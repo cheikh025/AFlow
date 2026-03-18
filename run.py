@@ -18,6 +18,16 @@ class ExperimentConfig:
 
 
 EXPERIMENT_CONFIGS: Dict[str, ExperimentConfig] = {
+    "MMLU": ExperimentConfig(
+        dataset="MMLU",
+        question_type="qa",
+        operators=["Custom", "AnswerGenerate", "ScEnsemble"],
+    ),
+    "FullStack": ExperimentConfig(
+        dataset="FullStack",
+        question_type="code",
+        operators=["Custom", "CustomCodeGenerate", "ScEnsemble"],
+    ),
     "DROP": ExperimentConfig(
         dataset="DROP",
         question_type="qa",
@@ -61,7 +71,7 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=str,
-        choices=list(EXPERIMENT_CONFIGS.keys()),
+        choices=list(EXPERIMENT_CONFIGS.keys()),  # auto-includes FullStack
         required=True,
         help="Dataset type",
     )

@@ -17,6 +17,7 @@ class LLMConfig:
         self.key = config.get("key", None)
         self.base_url = config.get("base_url", "https://oneapi.deepwisdom.ai/v1")
         self.top_p = config.get("top_p", 1)
+        self.extra_body = config.get("extra_body", None)
 
 class LLMsConfig:
     """Configuration manager for multiple LLM configurations"""
@@ -73,7 +74,8 @@ class LLMsConfig:
             "temperature": config.get("temperature", 1),
             "key": config.get("api_key"),  # Map api_key to key
             "base_url": config.get("base_url", "https://oneapi.deepwisdom.ai/v1"),
-            "top_p": config.get("top_p", 1)  # Add top_p parameter
+            "top_p": config.get("top_p", 1),
+            "extra_body": config.get("extra_body", None),
         }
         
         # Create and return an LLMConfig instance with the specified configuration
@@ -195,7 +197,8 @@ class AsyncLLM:
             model=self.config.model,
             messages=message,
             temperature=self.config.temperature,
-            top_p = self.config.top_p,
+            top_p=self.config.top_p,
+            **({"extra_body": self.config.extra_body} if self.config.extra_body else {}),
         )
 
         # Extract token usage from response
@@ -210,11 +213,6 @@ class AsyncLLM:
         )
         
         ret = response.choices[0].message.content
-        print(ret)
-        
-        # You can optionally print token usage information
-        print(f"Token usage: {input_tokens} input + {output_tokens} output = {input_tokens + output_tokens} total")
-        print(f"Cost: ${usage_record['total_cost']:.6f} (${usage_record['input_cost']:.6f} for input, ${usage_record['output_cost']:.6f} for output)")
         
         return ret
     

@@ -7,3 +7,5 @@ optimized
 *.pyc
 /workspace
 *.json
+*.arrow
+.env

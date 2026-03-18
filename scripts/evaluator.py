@@ -13,9 +13,11 @@ from benchmarks.humaneval import HumanEvalBenchmark
 from benchmarks.math import MATHBenchmark
 from benchmarks.mbpp import MBPPBenchmark
 from benchmarks.livecodebench import LiveCodeBench
+from benchmarks.mmlu import MMLUBenchmark
+from benchmarks.fullstack import FullStackBenchmark
 
 # If you want to customize tasks, add task types here and provide evaluation functions, just like the ones given above
-DatasetType = Literal["HumanEval", "MBPP", "GSM8K", "MATH", "HotpotQA", "DROP", "LiveCodeBench"]
+DatasetType = Literal["HumanEval", "MBPP", "GSM8K", "MATH", "HotpotQA", "DROP", "LiveCodeBench", "MMLU", "FullStack"]
 
 
 class Evaluator:
@@ -33,10 +35,13 @@ class Evaluator:
             "MBPP": MBPPBenchmark,
             "DROP": DROPBenchmark,
             "LiveCodeBench": LiveCodeBench,
+            "MMLU": MMLUBenchmark,
+            "FullStack": FullStackBenchmark,
         }
 
     async def graph_evaluate(
-        self, dataset: DatasetType, graph, params: dict, path: str, is_test: bool = False
+        self, dataset: DatasetType, graph, params: dict, path: str, is_test: bool = False,
+        max_concurrent_tasks: int = 20,
     ) -> Tuple[float, float, float]:
         if dataset not in self.dataset_configs:
             raise ValueError(f"Unsupported dataset: {dataset}")
@@ -51,7 +56,7 @@ class Evaluator:
             va_list = None  # For test data, generally use None to test all
         else:
             va_list = None  # Use None to test all Validation data, or set va_list (e.g., [1, 2, 3]) to use partial data
-        return await benchmark.run_evaluation(configured_graph, va_list)
+        return await benchmark.run_evaluation(configured_graph, va_list, max_concurrent_tasks)
 
     async def _configure_graph(self, dataset, graph, params: dict):
         # Here you can configure the graph based on params
