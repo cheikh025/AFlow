@@ -14,10 +14,11 @@ from benchmarks.math import MATHBenchmark
 from benchmarks.mbpp import MBPPBenchmark
 from benchmarks.livecodebench import LiveCodeBench
 from benchmarks.mmlu import MMLUBenchmark
+from benchmarks.mmlu_pro import MMLUProBenchmark
 from benchmarks.fullstack import FullStackBenchmark
 
 # If you want to customize tasks, add task types here and provide evaluation functions, just like the ones given above
-DatasetType = Literal["HumanEval", "MBPP", "GSM8K", "MATH", "HotpotQA", "DROP", "LiveCodeBench", "MMLU", "FullStack"]
+DatasetType = Literal["HumanEval", "MBPP", "GSM8K", "MATH", "HotpotQA", "DROP", "LiveCodeBench", "MMLU", "MMLUPro", "FullStack"]
 
 
 class Evaluator:
@@ -36,6 +37,7 @@ class Evaluator:
             "DROP": DROPBenchmark,
             "LiveCodeBench": LiveCodeBench,
             "MMLU": MMLUBenchmark,
+            "MMLUPro": MMLUProBenchmark,
             "FullStack": FullStackBenchmark,
         }
 

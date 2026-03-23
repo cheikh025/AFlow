@@ -4,6 +4,9 @@ from scripts.evaluator import Evaluator
 class EvaluationUtils:
     def __init__(self, root_path: str):
         self.root_path = root_path
+        self.total_exec_input_tokens = 0
+        self.total_exec_output_tokens = 0
+        self.total_questions_evaluated = 0
 
     async def evaluate_initial_round(self, optimizer, graph_path, directory, validation_n, data):
         # Load graph with graph_utils from optimizer
@@ -11,13 +14,16 @@ class EvaluationUtils:
         evaluator = Evaluator(eval_path=directory)
 
         for i in range(validation_n):
-            score, avg_cost, total_cost = await evaluator.graph_evaluate(
+            score, avg_cost, total_cost, exec_in, exec_out, n_q = await evaluator.graph_evaluate(
                 optimizer.dataset,
                 optimizer.graph,
                 {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
                 directory,
                 is_test=False,
             )
+            self.total_exec_input_tokens += exec_in
+            self.total_exec_output_tokens += exec_out
+            self.total_questions_evaluated += n_q
 
             new_data = optimizer.data_utils.create_result_data(optimizer.round, score, avg_cost, total_cost)
             data.append(new_data)
@@ -32,13 +38,16 @@ class EvaluationUtils:
         sum_score = 0
 
         for i in range(validation_n):
-            score, avg_cost, total_cost = await evaluator.graph_evaluate(
+            score, avg_cost, total_cost, exec_in, exec_out, n_q = await evaluator.graph_evaluate(
                 optimizer.dataset,
                 optimizer.graph,
                 {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
                 directory,
                 is_test=False,
             )
+            self.total_exec_input_tokens += exec_in
+            self.total_exec_output_tokens += exec_out
+            self.total_questions_evaluated += n_q
 
             cur_round = optimizer.round + 1 if initial is False else optimizer.round
 
@@ -54,10 +63,11 @@ class EvaluationUtils:
 
     async def evaluate_graph_test(self, optimizer, directory, is_test=True):
         evaluator = Evaluator(eval_path=directory)
-        return await evaluator.graph_evaluate(
+        score, avg_cost, total_cost, exec_in, exec_out, n_q = await evaluator.graph_evaluate(
             optimizer.dataset,
             optimizer.graph,
             {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
             directory,
             is_test=is_test,
         )
+        return score, avg_cost, total_cost

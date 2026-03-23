@@ -23,6 +23,11 @@ EXPERIMENT_CONFIGS: Dict[str, ExperimentConfig] = {
         question_type="qa",
         operators=["Custom", "AnswerGenerate", "ScEnsemble"],
     ),
+    "MMLUPro": ExperimentConfig(
+        dataset="MMLUPro",
+        question_type="qa",
+        operators=["Custom", "AnswerGenerate", "ScEnsemble"],
+    ),
     "FullStack": ExperimentConfig(
         dataset="FullStack",
         question_type="code",

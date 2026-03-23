@@ -5,7 +5,7 @@ Evaluates the best AFlow workflow (highest validation score) on held-out
 queries that were NOT seen during training (validation phase).
 
 Configuration:
-    Set DATASET = "MATH" or "MMLU" below, then run from the AFlow directory:
+    Set DATASET = "MATH", "MMLU", or "MMLUPro" below, then run from the AFlow directory:
         cd Baseline/AFlow
         python eval_best_workflow.py
 
@@ -34,14 +34,13 @@ if str(_AFLOW_DIR) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-DATASET          = "MMLU"   # "MATH"  or  "MMLU"
+DATASET          = "MMLU"   # "MATH", "MMLU", or "MMLUPro"
 NUM_EVAL_QUERIES = 100      # held-out queries per subject
 MAX_CONCURRENT   = 20       # concurrent evaluations
 SEED             = 99       # sampling seed (training used 42)
 # ──────────────────────────────────────────────────────────────────────────────
 
 MATH_SUBJECTS = [
-    "Prealgebra",
     "Number Theory",
     "Precalculus",
     "Counting & Probability",
@@ -54,13 +53,21 @@ MMLU_SUBJECTS = [
     "moral_scenarios",
     "econometrics",
 ]
+MMLU_PRO_SUBJECTS = [
+    "law",
+    "history",
+    "philosophy",
+    "engineering",
+]
 MATH_LEVEL = "Level 5"
 
 # ─── paths (relative to AFlow dir) ───────────────────────────────────────────
-MATH_VALIDATE_JSONL = _AFLOW_DIR / "data/datasets/math_validate.jsonl"
-MMLU_VALIDATE_JSONL = _AFLOW_DIR / "data/datasets/mmlu_validate.jsonl"
-MATH_RAW_TEST_DIR   = _AFLOW_DIR / "data/math_hf_cache/MATH/test"
-MMLU_HF_CACHE_DIR   = _AFLOW_DIR / "data/mmlu_hf_cache"
+MATH_VALIDATE_JSONL     = _AFLOW_DIR / "data/datasets/math_validate.jsonl"
+MMLU_VALIDATE_JSONL     = _AFLOW_DIR / "data/datasets/mmlu_validate.jsonl"
+MMLU_PRO_VALIDATE_JSONL = _AFLOW_DIR / "data/datasets/mmlu_pro_validate.jsonl"
+MATH_RAW_TEST_DIR       = _AFLOW_DIR / "data/math_hf_cache/MATH/test"
+MMLU_HF_CACHE_DIR       = _AFLOW_DIR / "data/mmlu_hf_cache"
+MMLU_PRO_HF_CACHE_DIR   = _AFLOW_DIR / "data/mmlu_pro_hf_cache"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +218,49 @@ def build_mmlu_heldout(rng: random.Random) -> List[dict]:
     return records
 
 
+def build_mmlu_pro_heldout(rng: random.Random) -> List[dict]:
+    """
+    Load MMLU-Pro test examples for the 4 categories, excluding training
+    fingerprints, then sample up to NUM_EVAL_QUERIES per category.
+    """
+    training_fps = load_training_fingerprints(MMLU_PRO_VALIDATE_JSONL, "question")
+    LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("Install 'datasets': pip install datasets")
+
+    print("  Loading MMLU-Pro from HuggingFace cache...")
+    ds = load_dataset("TIGER-Lab/MMLU-Pro", cache_dir=str(MMLU_PRO_HF_CACHE_DIR), split="test")
+    test_split = list(ds)
+
+    records = []
+    for category in MMLU_PRO_SUBJECTS:
+        pool = [
+            r for r in test_split
+            if r["category"] == category
+            and r["question"] not in training_fps
+        ]
+        n = min(NUM_EVAL_QUERIES, len(pool))
+        if n < NUM_EVAL_QUERIES:
+            print(f"  [warn] {category}: only {n} held-out examples (requested {NUM_EVAL_QUERIES})")
+        sampled = rng.sample(pool, n)
+        for r in sampled:
+            options = list(r["options"])
+            formatted = "\n".join(f"{LETTERS[i]}) {opt}" for i, opt in enumerate(options))
+            records.append({
+                "subject": category,
+                "question": r["question"],
+                "choices": options,
+                "formatted_choices": formatted,
+                "answer": str(r["answer"]).upper(),
+            })
+        print(f"  {category}: {n} held-out queries")
+
+    return records
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +282,9 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     if dataset == "MATH":
         from benchmarks.math import MATHBenchmark
         benchmark = MATHBenchmark(name=dataset, file_path="", log_path=str(log_dir))
+    elif dataset == "MMLUPro":
+        from benchmarks.mmlu_pro import MMLUProBenchmark
+        benchmark = MMLUProBenchmark(name=dataset, file_path="", log_path=str(log_dir))
     else:
         from benchmarks.mmlu import MMLUBenchmark
         benchmark = MMLUBenchmark(name=dataset, file_path="", log_path=str(log_dir))
@@ -264,7 +317,12 @@ def save_results(results: dict, dataset: str, best_round: int):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_file = out_dir / f"heldout_eval_{dataset}_{timestamp}.txt"
 
-    subjects = MATH_SUBJECTS if dataset == "MATH" else MMLU_SUBJECTS
+    if dataset == "MATH":
+        subjects = MATH_SUBJECTS
+    elif dataset == "MMLUPro":
+        subjects = MMLU_PRO_SUBJECTS
+    else:
+        subjects = MMLU_SUBJECTS
 
     with open(out_file, "w") as f:
         f.write("=" * 70 + "\n")
@@ -303,6 +361,8 @@ async def main():
     print(f"\nBuilding held-out queries (excluding training set) …")
     if DATASET == "MATH":
         held_out = build_math_heldout(rng)
+    elif DATASET == "MMLUPro":
+        held_out = build_mmlu_pro_heldout(rng)
     else:
         held_out = build_mmlu_heldout(rng)
 
@@ -310,7 +370,12 @@ async def main():
 
     results = await evaluate(DATASET, best_round, held_out)
 
-    subjects = MATH_SUBJECTS if DATASET == "MATH" else MMLU_SUBJECTS
+    if DATASET == "MATH":
+        subjects = MATH_SUBJECTS
+    elif DATASET == "MMLUPro":
+        subjects = MMLU_PRO_SUBJECTS
+    else:
+        subjects = MMLU_SUBJECTS
     print("\n" + "=" * 70)
     print(f"RESULTS  —  {DATASET}  (round {best_round})")
     print("=" * 70)

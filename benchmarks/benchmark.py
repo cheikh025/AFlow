@@ -96,12 +96,21 @@ class BaseBenchmark(ABC):
 
     async def run_evaluation(self, agent: Callable, va_list: List[int], max_concurrent_tasks: int = 50):
         data = await self.load_data(va_list)
+        n_problems = len(data)
         results = await self.evaluate_all_problems(data, agent, max_concurrent_tasks)
         columns = self.get_result_columns()
         average_score, average_cost, total_cost = self.save_results_to_csv(results, columns)
         logger.info(f"Average score on {self.name} dataset: {average_score:.5f}")
         logger.info(f"Total Cost: {total_cost:.5f}")
-        return average_score, average_cost, total_cost
+        # Extract token counts from agent's execution LLM tracker
+        exec_input_tokens, exec_output_tokens = 0, 0
+        try:
+            summary = agent.llm.get_usage_summary()
+            exec_input_tokens = summary["total_input_tokens"]
+            exec_output_tokens = summary["total_output_tokens"]
+        except AttributeError:
+            pass
+        return average_score, average_cost, total_cost, exec_input_tokens, exec_output_tokens, n_problems
     
 
     async def run_baseline(self, agent: Callable, max_concurrent_tasks: int = 50):

@@ -4,6 +4,8 @@
 # @Desc    : optimizer for graph (updated with AsyncLLM integration)
 
 import asyncio
+import json
+import os
 import time
 from typing import List, Literal, Dict
 
@@ -116,6 +118,50 @@ class Optimizer:
                 break
 
             time.sleep(5)
+
+        self._log_token_usage()
+
+    def _log_token_usage(self):
+        """Log search and execution token usage to console and JSON file."""
+        search = self.optimize_llm.get_usage_summary()
+        search_input = search["total_input_tokens"]
+        search_output = search["total_output_tokens"]
+        search_total = search["total_tokens"]
+
+        exec_input = self.evaluation_utils.total_exec_input_tokens
+        exec_output = self.evaluation_utils.total_exec_output_tokens
+        exec_total = exec_input + exec_output
+        total_q = self.evaluation_utils.total_questions_evaluated
+        avg_exec = exec_total / total_q if total_q > 0 else 0
+
+        print("\n" + "=" * 60)
+        print("TOKEN USAGE REPORT")
+        print("=" * 60)
+        print(f"Search tokens    — total: {search_total:,}  |  input: {search_input:,}  |  output: {search_output:,}")
+        print(f"Execution tokens — total: {exec_total:,}  |  input: {exec_input:,}  |  output: {exec_output:,}")
+        print(f"Avg execution tokens per question: {avg_exec:.1f}  (over {total_q:,} questions)")
+        print("=" * 60 + "\n")
+
+        report = {
+            "search": {
+                "total_tokens": search_total,
+                "input_tokens": search_input,
+                "output_tokens": search_output,
+            },
+            "execution": {
+                "total_tokens": exec_total,
+                "input_tokens": exec_input,
+                "output_tokens": exec_output,
+            },
+            "avg_execution_tokens_per_question": round(avg_exec, 2),
+            "total_questions_evaluated": total_q,
+        }
+
+        report_path = os.path.join(self.root_path, "token_usage.json")
+        os.makedirs(self.root_path, exist_ok=True)
+        with open(report_path, "w") as f:
+            json.dump(report, f, indent=4)
+        logger.info(f"Token usage report saved to: {report_path}")
 
     async def _optimize_graph(self):
         validation_n = self.validation_rounds  # validation datasets's execution number
