@@ -1,6 +1,6 @@
-# XXX_PROMPT = """
-#
-# Solve it.
-#
-# """
+XXX_PROMPT = """
+
+Solve it.
+
+"""
 

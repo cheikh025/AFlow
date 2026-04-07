@@ -149,11 +149,12 @@ class DataUtils:
         return str(Path(graph_path) / "results.json")
 
     def create_result_data(
-        self, 
-        round: int, 
-        score: float, 
-        avg_cost: float, 
-        total_cost: float
+        self,
+        round: int,
+        score: float,
+        avg_cost: float,
+        total_cost: float,
+        partial: bool = False,
     ) -> dict:
 
         now = datetime.datetime.now()
@@ -162,7 +163,8 @@ class DataUtils:
             "score": score,
             "avg_cost": avg_cost,
             "total_cost": total_cost,
-            "time": now
+            "time": now,
+            "partial": partial,
         }
 
     def save_results(self, json_file_path: str, data: list) -> None:

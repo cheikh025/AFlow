@@ -24,7 +24,7 @@ CATEGORIES = [
 
 SEED = 42
 N_PER_CATEGORY = 20
-OUTPUT_PATH = Path(__file__).parent / "datasets" / "mmlu_pro_validate.jsonl"
+OUTPUT_PATH = Path(__file__).parent / "datasets" / "mmlupro_validate.jsonl"
 CACHE_DIR = Path(__file__).parent / "mmlu_pro_hf_cache"
 
 LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]

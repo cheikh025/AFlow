@@ -12,6 +12,7 @@ from typing import List, Literal, Dict
 from pydantic import BaseModel, Field
 
 from scripts.evaluator import DatasetType
+from scripts.optimizer_utils.budget_tracker import BudgetTracker
 from scripts.optimizer_utils.convergence_utils import ConvergenceUtils
 from scripts.optimizer_utils.data_utils import DataUtils
 from scripts.optimizer_utils.evaluation_utils import EvaluationUtils
@@ -45,6 +46,7 @@ class Optimizer:
         initial_round: int = 1,
         max_rounds: int = 20,
         validation_rounds: int = 5,
+        token_budget: int = None,
     ) -> None:
         self.optimize_llm_config = opt_llm_config
         self.optimize_llm = create_llm_instance(self.optimize_llm_config)
@@ -63,6 +65,7 @@ class Optimizer:
         self.round = initial_round
         self.max_rounds = max_rounds
         self.validation_rounds = validation_rounds
+        self.budget = BudgetTracker(token_budget)
 
         self.graph_utils = GraphUtils(self.root_path)
         self.data_utils = DataUtils(self.root_path)
@@ -107,6 +110,13 @@ class Optimizer:
             self.round += 1
             logger.info(f"Score for round {self.round}: {score}")
 
+            if self.budget.is_exceeded():
+                logger.info(
+                    f"Token budget of {self.budget.limit:,} reached "
+                    f"({self.budget.used:,} tokens used). Stopping."
+                )
+                break
+
             converged, convergence_round, final_round = self.convergence_utils.check_convergence(top_k=3)
 
             if converged and self.check_convergence:
@@ -142,22 +152,47 @@ class Optimizer:
         print(f"Avg execution tokens per question: {avg_exec:.1f}  (over {total_q:,} questions)")
         print("=" * 60 + "\n")
 
+        report_path = os.path.join(self.root_path, "token_usage.json")
+
+        # Load previous totals if resuming
+        prev_search_input = prev_search_output = prev_search_total = 0
+        prev_exec_input = prev_exec_output = prev_exec_total = 0
+        prev_total_q = 0
+        if os.path.exists(report_path):
+            with open(report_path, "r") as f:
+                prev = json.load(f)
+            prev_search_input  = prev.get("search", {}).get("input_tokens", 0)
+            prev_search_output = prev.get("search", {}).get("output_tokens", 0)
+            prev_search_total  = prev.get("search", {}).get("total_tokens", 0)
+            prev_exec_input    = prev.get("execution", {}).get("input_tokens", 0)
+            prev_exec_output   = prev.get("execution", {}).get("output_tokens", 0)
+            prev_exec_total    = prev.get("execution", {}).get("total_tokens", 0)
+            prev_total_q       = prev.get("total_questions_evaluated", 0)
+
+        cum_search_input  = prev_search_input  + search_input
+        cum_search_output = prev_search_output + search_output
+        cum_search_total  = prev_search_total  + search_total
+        cum_exec_input    = prev_exec_input    + exec_input
+        cum_exec_output   = prev_exec_output   + exec_output
+        cum_exec_total    = prev_exec_total    + exec_total
+        cum_total_q       = prev_total_q       + total_q
+        cum_avg_exec      = cum_exec_total / cum_total_q if cum_total_q > 0 else 0
+
         report = {
             "search": {
-                "total_tokens": search_total,
-                "input_tokens": search_input,
-                "output_tokens": search_output,
+                "total_tokens": cum_search_total,
+                "input_tokens": cum_search_input,
+                "output_tokens": cum_search_output,
             },
             "execution": {
-                "total_tokens": exec_total,
-                "input_tokens": exec_input,
-                "output_tokens": exec_output,
+                "total_tokens": cum_exec_total,
+                "input_tokens": cum_exec_input,
+                "output_tokens": cum_exec_output,
             },
-            "avg_execution_tokens_per_question": round(avg_exec, 2),
-            "total_questions_evaluated": total_q,
+            "avg_execution_tokens_per_question": round(cum_avg_exec, 2),
+            "total_questions_evaluated": cum_total_q,
         }
 
-        report_path = os.path.join(self.root_path, "token_usage.json")
         os.makedirs(self.root_path, exist_ok=True)
         with open(report_path, "w") as f:
             json.dump(report, f, indent=4)
@@ -172,10 +207,14 @@ class Optimizer:
             directory = self.graph_utils.create_round_directory(graph_path, self.round)
             # Load graph using graph_utils
             self.graph = self.graph_utils.load_graph(self.round, graph_path)
-            avg_score = await self.evaluation_utils.evaluate_graph(self, directory, validation_n, data, initial=True)
+            avg_score = await self.evaluation_utils.evaluate_graph(self, directory, validation_n, data, self.budget, initial=True)
 
         # Create a loop until the generated graph meets the check conditions
         while True:
+            if self.budget.is_exceeded():
+                logger.info("Token budget exceeded before workflow generation — skipping round.")
+                return None
+
             directory = self.graph_utils.create_round_directory(graph_path, self.round + 1)
 
             top_rounds = self.data_utils.get_top_rounds(self.sample)
@@ -198,26 +237,36 @@ class Optimizer:
             try:
                 # Create XmlFormatter based on GraphOptimize model
                 graph_formatter = XmlFormatter.from_model(GraphOptimize)
-                
+
+                _search_before = self.optimize_llm.usage_tracker.total_input_tokens + self.optimize_llm.usage_tracker.total_output_tokens
                 # Call the LLM with formatter
                 response = await self.optimize_llm.call_with_format(
-                    graph_optimize_prompt, 
+                    graph_optimize_prompt,
                     graph_formatter
                 )
-                
+                _search_after = self.optimize_llm.usage_tracker.total_input_tokens + self.optimize_llm.usage_tracker.total_output_tokens
+                self.budget.consume(_search_after - _search_before)
+
                 # If we reach here, response is properly formatted and validated
                 logger.info(f"Graph optimization response received successfully")
             except FormatError as e:
                 # Handle format validation errors
                 logger.error(f"Format error in graph optimization: {str(e)}")
                 # Try again with a fallback approach - direct call with post-processing
+                _search_before = self.optimize_llm.usage_tracker.total_input_tokens + self.optimize_llm.usage_tracker.total_output_tokens
                 raw_response = await self.optimize_llm(graph_optimize_prompt)
-                
+                _search_after = self.optimize_llm.usage_tracker.total_input_tokens + self.optimize_llm.usage_tracker.total_output_tokens
+                self.budget.consume(_search_after - _search_before)
+
                 # Try to extract fields using basic parsing
                 response = self._extract_fields_from_response(raw_response)
                 if not response:
                     logger.error("Failed to extract fields from raw response, retrying...")
                     continue
+
+            if self.budget.is_exceeded():
+                logger.info("Token budget exceeded after workflow generation — skipping evaluation.")
+                return None
 
             # Check if the modification meets the conditions
             check = self.experience_utils.check_modification(
@@ -237,7 +286,7 @@ class Optimizer:
 
         logger.info(directory)
 
-        avg_score = await self.evaluation_utils.evaluate_graph(self, directory, validation_n, data, initial=False)
+        avg_score = await self.evaluation_utils.evaluate_graph(self, directory, validation_n, data, self.budget, initial=False)
 
         self.experience_utils.update_experience(directory, experience, avg_score)
 

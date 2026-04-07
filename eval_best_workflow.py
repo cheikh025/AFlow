@@ -34,9 +34,9 @@ if str(_AFLOW_DIR) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-DATASET          = "MMLU"   # "MATH", "MMLU", or "MMLUPro"
-NUM_EVAL_QUERIES = 100      # held-out queries per subject
-MAX_CONCURRENT   = 20       # concurrent evaluations
+DATASET          = "MMLUPro"   # "MATH", "MMLU", or "MMLUPro"
+NUM_EVAL_QUERIES = 50      # held-out queries per subject
+MAX_CONCURRENT   = 50       # concurrent evaluations
 SEED             = 99       # sampling seed (training used 42)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ def load_graph_class(dataset: str, round_n: int):
 def get_exec_llm_config():
     from scripts.async_llm import LLMsConfig
     models = LLMsConfig.default()
-    return models.get("openai/gpt-oss-20b")
+    return models.get("openai/gpt-4o-mini-2024-07-18")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

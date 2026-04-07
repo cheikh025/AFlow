@@ -84,24 +84,61 @@ class BaseBenchmark(ABC):
     def get_result_columns(self) -> List[str]:
         pass
 
-    async def evaluate_all_problems(self, data: List[dict], agent: Callable, max_concurrent_tasks: int = 50):
+    async def evaluate_all_problems(self, data: List[dict], agent: Callable, max_concurrent_tasks: int = 50, budget=None):
         semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        lock = asyncio.Lock()
+        checkpoint = [0]  # mutable container so the nested function can update it
 
         async def sem_evaluate(problem):
+            # If budget already exceeded, skip without running
+            if budget is not None and budget.exceeded.is_set():
+                return None
             async with semaphore:
-                return await self.evaluate_problem(problem, agent)
+                if budget is not None and budget.exceeded.is_set():
+                    return None
+                result = await self.evaluate_problem(problem, agent)
+                # Compute token delta since last checkpoint and consume budget
+                if budget is not None:
+                    async with lock:
+                        try:
+                            summary = agent.llm.get_usage_summary()
+                            current = summary["total_input_tokens"] + summary["total_output_tokens"]
+                        except AttributeError:
+                            current = checkpoint[0]
+                        delta = current - checkpoint[0]
+                        checkpoint[0] = current
+                        budget.consume(delta)
+                return result
 
         tasks = [sem_evaluate(problem) for problem in data]
         return await tqdm_asyncio.gather(*tasks, desc=f"Evaluating {self.name} problems", total=len(data))
 
-    async def run_evaluation(self, agent: Callable, va_list: List[int], max_concurrent_tasks: int = 50):
+    async def run_evaluation(self, agent: Callable, va_list: List[int], max_concurrent_tasks: int = 50, budget=None):
         data = await self.load_data(va_list)
-        n_problems = len(data)
-        results = await self.evaluate_all_problems(data, agent, max_concurrent_tasks)
+        n_total = len(data)
+        results = await self.evaluate_all_problems(data, agent, max_concurrent_tasks, budget=budget)
         columns = self.get_result_columns()
-        average_score, average_cost, total_cost = self.save_results_to_csv(results, columns)
-        logger.info(f"Average score on {self.name} dataset: {average_score:.5f}")
+
+        valid_results = [r for r in results if r is not None]
+        n_skipped = n_total - len(valid_results)
+        is_partial = n_skipped > 0
+
+        if valid_results:
+            average_score, average_cost, total_cost = self.save_results_to_csv(valid_results, columns)
+            # Penalize score: skipped problems count as 0
+            average_score = average_score * len(valid_results) / n_total
+        else:
+            average_score, average_cost, total_cost = 0.0, 0.0, 0.0
+
+        if is_partial:
+            logger.info(
+                f"Budget stop: {len(valid_results)}/{n_total} problems evaluated. "
+                f"Adjusted score: {average_score:.5f}"
+            )
+        else:
+            logger.info(f"Average score on {self.name} dataset: {average_score:.5f}")
         logger.info(f"Total Cost: {total_cost:.5f}")
+
         # Extract token counts from agent's execution LLM tracker
         exec_input_tokens, exec_output_tokens = 0, 0
         try:
@@ -110,7 +147,7 @@ class BaseBenchmark(ABC):
             exec_output_tokens = summary["total_output_tokens"]
         except AttributeError:
             pass
-        return average_score, average_cost, total_cost, exec_input_tokens, exec_output_tokens, n_problems
+        return average_score, average_cost, total_cost, exec_input_tokens, exec_output_tokens, n_total, is_partial
     
 
     async def run_baseline(self, agent: Callable, max_concurrent_tasks: int = 50):

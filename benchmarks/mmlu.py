@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # @Desc    : MMLU benchmark for AFlow (4-subject combined, with per-subject logging)
 
+import inspect
 import re
 from collections import defaultdict
 from typing import Callable, List, Optional, Tuple
@@ -50,6 +51,12 @@ class MMLUBenchmark(BaseBenchmark):
         score = 1.0 if extracted == expected_output else 0.0
         return score, extracted or ""
 
+    def get_function_code(self, func):
+        try:
+            return inspect.getsource(func)
+        except OSError:
+            return "no code"
+
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(1), retry=retry_if_exception_type(Exception), reraise=True)
     async def _generate_output(self, graph, input_text: str):
         return await graph(input_text)
@@ -64,7 +71,13 @@ class MMLUBenchmark(BaseBenchmark):
             score, extracted = self.calculate_score(expected, output)
 
             if score == 0:
-                self.log_mismatch(input_text, expected, output, extracted)
+                self.log_mismatch(
+                    input_text,
+                    expected,
+                    output,
+                    extracted,
+                    extract_answer_code=self.get_function_code(self.extract_answer_letter),
+                )
 
             return subject, input_text, output, expected, score, cost
 

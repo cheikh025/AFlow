@@ -14,7 +14,7 @@ class EvaluationUtils:
         evaluator = Evaluator(eval_path=directory)
 
         for i in range(validation_n):
-            score, avg_cost, total_cost, exec_in, exec_out, n_q = await evaluator.graph_evaluate(
+            score, avg_cost, total_cost, exec_in, exec_out, n_q, _ = await evaluator.graph_evaluate(
                 optimizer.dataset,
                 optimizer.graph,
                 {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
@@ -33,17 +33,18 @@ class EvaluationUtils:
 
         return data
 
-    async def evaluate_graph(self, optimizer, directory, validation_n, data, initial=False):
+    async def evaluate_graph(self, optimizer, directory, validation_n, data, budget, initial=False):
         evaluator = Evaluator(eval_path=directory)
         sum_score = 0
 
         for i in range(validation_n):
-            score, avg_cost, total_cost, exec_in, exec_out, n_q = await evaluator.graph_evaluate(
+            score, avg_cost, total_cost, exec_in, exec_out, n_q, is_partial = await evaluator.graph_evaluate(
                 optimizer.dataset,
                 optimizer.graph,
                 {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
                 directory,
                 is_test=False,
+                budget=budget,
             )
             self.total_exec_input_tokens += exec_in
             self.total_exec_output_tokens += exec_out
@@ -51,7 +52,7 @@ class EvaluationUtils:
 
             cur_round = optimizer.round + 1 if initial is False else optimizer.round
 
-            new_data = optimizer.data_utils.create_result_data(cur_round, score, avg_cost, total_cost)
+            new_data = optimizer.data_utils.create_result_data(cur_round, score, avg_cost, total_cost, partial=is_partial)
             data.append(new_data)
 
             result_path = optimizer.data_utils.get_results_file_path(f"{optimizer.root_path}/workflows")
@@ -59,11 +60,15 @@ class EvaluationUtils:
 
             sum_score += score
 
-        return sum_score / validation_n
+            if budget.is_exceeded():
+                break
+
+        completed = i + 1
+        return sum_score / completed
 
     async def evaluate_graph_test(self, optimizer, directory, is_test=True):
         evaluator = Evaluator(eval_path=directory)
-        score, avg_cost, total_cost, exec_in, exec_out, n_q = await evaluator.graph_evaluate(
+        score, avg_cost, total_cost, exec_in, exec_out, n_q, _ = await evaluator.graph_evaluate(
             optimizer.dataset,
             optimizer.graph,
             {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},

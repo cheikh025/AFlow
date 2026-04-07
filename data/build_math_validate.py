@@ -21,14 +21,13 @@ from pathlib import Path
 
 # ── Must match MAS optimizer settings exactly ─────────────────────────────────
 SUBJECTS = [
-    "Prealgebra",
     "Number Theory",
     "Precalculus",
     "Counting & Probability",
 ]
 LEVEL = "Level 5"
 SEED = 42
-N_PER_SUBJECT = 30
+N_PER_SUBJECT = 20
 # ──────────────────────────────────────────────────────────────────────────────
 
 OUTPUT_PATH = Path(__file__).parent / "datasets" / "math_validate.jsonl"

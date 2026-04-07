@@ -92,6 +92,12 @@ def parse_args():
     parser.add_argument("--check_convergence", type=bool, default=True, help="Whether to enable early stop")
     parser.add_argument("--validation_rounds", type=int, default=1, help="Validation rounds")
     parser.add_argument(
+        "--token_budget",
+        type=int,
+        default=None,
+        help="Total token budget (search + execution). Stop when exceeded. Default: unlimited.",
+    )
+    parser.add_argument(
         "--if_force_download",
         type=lambda x: x.lower() == "true",
         default=False,
@@ -146,6 +152,7 @@ if __name__ == "__main__":
         initial_round=args.initial_round,
         max_rounds=args.max_rounds,
         validation_rounds=args.validation_rounds,
+        token_budget=args.token_budget,
     )
 
     # Optimize workflow via setting the optimizer's mode to 'Graph'
