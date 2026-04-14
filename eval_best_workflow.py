@@ -39,6 +39,7 @@ NUM_EVAL_QUERIES  = 50      # held-out queries per subject
 MAX_CONCURRENT    = 50      # concurrent evaluations
 SEED              = 99      # sampling seed (training used 42)
 VALIDATION_ROUNDS = 1       # how many times to evaluate (scores are averaged)
+QUERY_TIMEOUT     = 120     # seconds before a single query is abandoned (0 = no timeout)
 # ──────────────────────────────────────────────────────────────────────────────
 
 MATH_SUBJECTS = [
@@ -298,11 +299,23 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
             # Fresh instance per query → its TokenUsageTracker captures only this query's LLM calls,
             # even when the workflow internally makes multiple LLM calls (e.g. ScEnsemble).
             graph = WorkflowClass(name=dataset, llm_config=llm_config, dataset=dataset)
-            result = await benchmark.evaluate_problem(problem, graph)
-            summary = graph.llm.get_usage_summary()
-            in_tok  = summary["total_input_tokens"]
-            out_tok = summary["total_output_tokens"]
-            return result + (in_tok, out_tok, in_tok + out_tok)
+            n_cols = len(base_columns)
+            try:
+                coro = benchmark.evaluate_problem(problem, graph)
+                if QUERY_TIMEOUT > 0:
+                    result = await asyncio.wait_for(coro, timeout=QUERY_TIMEOUT)
+                else:
+                    result = await coro
+                summary = graph.llm.get_usage_summary()
+                in_tok  = summary["total_input_tokens"]
+                out_tok = summary["total_output_tokens"]
+                return result + (in_tok, out_tok, in_tok + out_tok)
+            except asyncio.TimeoutError:
+                subject = problem.get("subject", problem.get("category", "unknown"))
+                print(f"\n  [timeout] query in '{subject}' exceeded {QUERY_TIMEOUT}s — scored 0")
+                # Return a zero-score row with the right number of columns
+                failed = (subject,) + ("",) * (n_cols - 3) + (0.0, 0.0)
+                return failed + (0, 0, 0)
 
     print(f"\nRunning evaluation on {len(held_out)} queries "
           f"(max_concurrent={MAX_CONCURRENT}, validation_rounds={VALIDATION_ROUNDS}) …")
