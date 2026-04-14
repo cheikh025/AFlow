@@ -34,10 +34,11 @@ if str(_AFLOW_DIR) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-DATASET          = "MMLUPro"   # "MATH", "MMLU", or "MMLUPro"
-NUM_EVAL_QUERIES = 50      # held-out queries per subject
-MAX_CONCURRENT   = 50       # concurrent evaluations
-SEED             = 99       # sampling seed (training used 42)
+DATASET           = "MMLUPro"   # "MATH", "MMLU", or "MMLUPro"
+NUM_EVAL_QUERIES  = 50      # held-out queries per subject
+MAX_CONCURRENT    = 50      # concurrent evaluations
+SEED              = 99      # sampling seed (training used 42)
+VALIDATION_ROUNDS = 1       # how many times to evaluate (scores are averaged)
 # ──────────────────────────────────────────────────────────────────────────────
 
 MATH_SUBJECTS = [
@@ -267,18 +268,15 @@ def build_mmlu_pro_heldout(rng: random.Random) -> List[dict]:
 
 async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     """Run held-out evaluation and return per-subject score dict."""
-    from scripts.async_llm import LLMsConfig
+    import asyncio
+    import pandas as pd
 
     llm_config = get_exec_llm_config()
-
-    # Load the best workflow class
     WorkflowClass = load_graph_class(dataset, best_round)
 
-    # Create a temp log dir so benchmark CSV / log.json go there
     log_dir = _AFLOW_DIR / f"workspace/{dataset}/workflows/heldout_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Instantiate the benchmark (file_path unused — we call evaluate_all_problems directly)
     if dataset == "MATH":
         from benchmarks.math import MATHBenchmark
         benchmark = MATHBenchmark(name=dataset, file_path="", log_path=str(log_dir))
@@ -289,22 +287,64 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         from benchmarks.mmlu import MMLUBenchmark
         benchmark = MMLUBenchmark(name=dataset, file_path="", log_path=str(log_dir))
 
-    # Instantiate the workflow graph (new instance per run)
-    graph = WorkflowClass(name=dataset, llm_config=llm_config, dataset=dataset)
+    base_columns = benchmark.get_result_columns()
+    all_columns = base_columns + ["input_tokens", "output_tokens", "total_tokens"]
 
-    print(f"\nRunning evaluation on {len(held_out)} queries (max_concurrent={MAX_CONCURRENT}) …")
-    results_raw = await benchmark.evaluate_all_problems(held_out, graph, MAX_CONCURRENT)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
-    columns = benchmark.get_result_columns()
-    avg_score, _, _ = benchmark.save_results_to_csv(results_raw, columns)
+    async def evaluate_one(problem: dict) -> tuple:
+        """Evaluate a single query with its own Workflow instance for isolated token tracking."""
+        async with semaphore:
+            # Fresh instance per query → its TokenUsageTracker captures only this query's LLM calls,
+            # even when the workflow internally makes multiple LLM calls (e.g. ScEnsemble).
+            graph = WorkflowClass(name=dataset, llm_config=llm_config, dataset=dataset)
+            result = await benchmark.evaluate_problem(problem, graph)
+            summary = graph.llm.get_usage_summary()
+            in_tok  = summary["total_input_tokens"]
+            out_tok = summary["total_output_tokens"]
+            return result + (in_tok, out_tok, in_tok + out_tok)
 
-    # Per-subject breakdown
-    import pandas as pd
-    df = pd.DataFrame(results_raw, columns=columns)
-    per_subject = df.groupby("subject")["score"].mean().to_dict()
-    per_subject["__average__"] = avg_score
+    print(f"\nRunning evaluation on {len(held_out)} queries "
+          f"(max_concurrent={MAX_CONCURRENT}, validation_rounds={VALIDATION_ROUNDS}) …")
 
-    return per_subject
+    accumulated: dict = {}  # subject -> list of per-round scores
+    round_averages = []
+
+    for round_i in range(1, VALIDATION_ROUNDS + 1):
+        if VALIDATION_ROUNDS > 1:
+            print(f"\n--- Validation round {round_i}/{VALIDATION_ROUNDS} ---")
+
+        tasks = [evaluate_one(p) for p in held_out]
+        results_raw = await asyncio.gather(*tasks)
+
+        df = pd.DataFrame(results_raw, columns=all_columns)
+        avg_score = df["score"].mean()
+
+        # Save CSV (includes token columns)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = log_dir / f"{avg_score:.5f}_{timestamp}.csv"
+        df.to_csv(csv_path, index=False)
+
+        # Token summary for this round
+        total_in  = int(df["input_tokens"].sum())
+        total_out = int(df["output_tokens"].sum())
+        avg_in    = df["input_tokens"].mean()
+        avg_out   = df["output_tokens"].mean()
+        print(f"    Tokens per query  — avg input: {avg_in:.0f}  avg output: {avg_out:.0f}  avg total: {avg_in + avg_out:.0f}")
+        print(f"    Tokens run total  — input: {total_in:,}  output: {total_out:,}  total: {total_in + total_out:,}")
+
+        per_subject = df.groupby("subject")["score"].mean().to_dict()
+        for subj, score in per_subject.items():
+            accumulated.setdefault(subj, []).append(score)
+        round_averages.append(avg_score)
+
+        if VALIDATION_ROUNDS > 1:
+            print(f"    Round {round_i} average score: {avg_score:.4f}")
+
+    per_subject_avg = {subj: sum(scores) / len(scores) for subj, scores in accumulated.items()}
+    per_subject_avg["__average__"] = sum(round_averages) / len(round_averages)
+
+    return per_subject_avg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
