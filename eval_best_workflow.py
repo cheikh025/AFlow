@@ -314,8 +314,9 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         if VALIDATION_ROUNDS > 1:
             print(f"\n--- Validation round {round_i}/{VALIDATION_ROUNDS} ---")
 
+        from tqdm.asyncio import tqdm_asyncio
         tasks = [evaluate_one(p) for p in held_out]
-        results_raw = await asyncio.gather(*tasks)
+        results_raw = await tqdm_asyncio.gather(*tasks, desc=f"Evaluating {dataset} (round {round_i}/{VALIDATION_ROUNDS})", total=len(tasks))
 
         df = pd.DataFrame(results_raw, columns=all_columns)
         avg_score = df["score"].mean()
