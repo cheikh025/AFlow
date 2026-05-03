@@ -3,7 +3,6 @@
 # @Author  : Zhaoyang
 # @Desc    : 
 
-import httpx
 from openai import AsyncOpenAI
 from scripts.formatter import BaseFormatter, FormatError
 
@@ -19,8 +18,6 @@ class LLMConfig:
         self.base_url = config.get("base_url", "https://oneapi.deepwisdom.ai/v1")
         self.top_p = config.get("top_p", 1)
         self.extra_body = config.get("extra_body", None)
-        self.proxy = config.get("proxy", None)
-        self.verify_ssl = config.get("verify_ssl", True)
 
 class LLMsConfig:
     """Configuration manager for multiple LLM configurations"""
@@ -79,8 +76,6 @@ class LLMsConfig:
             "base_url": config.get("base_url", "https://oneapi.deepwisdom.ai/v1"),
             "top_p": config.get("top_p", 1),
             "extra_body": config.get("extra_body", None),
-            "proxy": config.get("proxy", None),
-            "verify_ssl": config.get("verify_ssl", True),
         }
         
         # Create and return an LLMConfig instance with the specified configuration
@@ -184,11 +179,7 @@ class AsyncLLM:
         
         # At this point, config should be an LLMConfig instance
         self.config = config
-        if self.config.proxy:
-            http_client = httpx.AsyncClient(proxy=self.config.proxy, verify=self.config.verify_ssl)
-            self.aclient = AsyncOpenAI(api_key=self.config.key, base_url=self.config.base_url, http_client=http_client)
-        else:
-            self.aclient = AsyncOpenAI(api_key=self.config.key, base_url=self.config.base_url)
+        self.aclient = AsyncOpenAI(api_key=self.config.key, base_url=self.config.base_url)
         self.sys_msg = system_msg
         self.usage_tracker = TokenUsageTracker()
         

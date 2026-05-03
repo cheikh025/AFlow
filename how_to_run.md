@@ -42,9 +42,9 @@ python reset_experiment.py --dataset MMLUPro
 ### Step 3 — Run the search
 ```
 python run.py --dataset MMLUPro \
-  --opt_model_name "google/gemini-2.5-flash" \
-  --exec_model_name "openai/gpt-4o-mini-2024-07-18" \
-  --max_rounds 20
+  --opt_model_name "deepseek/deepseek-v4-flash" \
+  --exec_model_name "openai/gpt-4.1-nano" \
+  --max_rounds 25 --validation_rounds 1
 ```
 
 ### Step 4 — Run held-out evaluation on best workflow

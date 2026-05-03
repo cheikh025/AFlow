@@ -1,0 +1,14 @@
+{
+    "Custom": {
+        "description": "Generates anything based on customized input and instruction.",
+        "interface": "custom(input: str, instruction: str) -> dict with key 'response' of type str"
+    },
+    "AnswerGenerate": {
+        "description": "Generates a step-by-step thought process and a final answer for the given input.",
+        "interface": "answer_generate(input: str) -> dict with keys 'thought' of type str and 'answer' of type str"
+    },
+    "ScEnsemble": {
+        "description": "Uses self-consistency to select the solution that appears most frequently in the solution list.",
+        "interface": "sc_ensemble(solutions: List[str], problem: str) -> dict with key 'response' of type str"
+    }
+}

@@ -6,6 +6,8 @@ optimized
 */__pycache__
 *.pyc
 /workspace
+!/workspace/FullStack
+!/workspace/FullStack/**
 *.json
 *.arrow
 .env
