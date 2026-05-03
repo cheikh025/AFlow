@@ -34,11 +34,11 @@ if str(_AFLOW_DIR) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-DATASET           = "MMLUPro"   # "MATH", "MMLU", or "MMLUPro"
+DATASET           = "MMLUPro"   # "MATH", "MMLU", "MMLUPro", or "FullStack"
 NUM_EVAL_QUERIES  = 50      # held-out queries per subject
 MAX_CONCURRENT    = 50      # concurrent evaluations
 SEED              = 99      # sampling seed (training used 42)
-VALIDATION_ROUNDS = 1       # how many times to evaluate (scores are averaged)
+VALIDATION_ROUNDS = 3       # how many times to evaluate (scores are averaged)
 QUERY_TIMEOUT     = 120     # seconds before a single query is abandoned (0 = no timeout)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -61,15 +61,23 @@ MMLU_PRO_SUBJECTS = [
     "philosophy",
     "engineering",
 ]
+FULLSTACK_CATEGORIES = [
+    "Advanced Programming",
+    "Scientific Computing",
+    "Data Analysis",
+    "Desktop and Web Development",
+]
 MATH_LEVEL = "Level 5"
 
 # ─── paths (relative to AFlow dir) ───────────────────────────────────────────
 MATH_VALIDATE_JSONL     = _AFLOW_DIR / "data/datasets/math_validate.jsonl"
 MMLU_VALIDATE_JSONL     = _AFLOW_DIR / "data/datasets/mmlu_validate.jsonl"
 MMLU_PRO_VALIDATE_JSONL = _AFLOW_DIR / "data/datasets/mmlu_pro_validate.jsonl"
-MATH_RAW_TEST_DIR       = _AFLOW_DIR / "data/math_hf_cache/MATH/test"
-MMLU_HF_CACHE_DIR       = _AFLOW_DIR / "data/mmlu_hf_cache"
-MMLU_PRO_HF_CACHE_DIR   = _AFLOW_DIR / "data/mmlu_pro_hf_cache"
+MATH_RAW_TEST_DIR           = _AFLOW_DIR / "data/math_hf_cache/MATH/test"
+MMLU_HF_CACHE_DIR           = _AFLOW_DIR / "data/mmlu_hf_cache"
+MMLU_PRO_HF_CACHE_DIR       = _AFLOW_DIR / "data/mmlu_pro_hf_cache"
+FULLSTACK_VALIDATE_JSONL    = _AFLOW_DIR / "data/datasets/fullstack_validate.jsonl"
+FULLSTACK_HF_CACHE_DIR      = _AFLOW_DIR / "data/fullstack_hf_cache"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -263,6 +271,45 @@ def build_mmlu_pro_heldout(rng: random.Random) -> List[dict]:
     return records
 
 
+def build_fullstack_heldout(rng: random.Random) -> List[dict]:
+    """
+    Load FullStackBench test examples for the 4 categories, excluding training
+    fingerprints (by id), then sample up to NUM_EVAL_QUERIES per category.
+    """
+    training_fps = load_training_fingerprints(FULLSTACK_VALIDATE_JSONL, "id")
+
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("Install 'datasets': pip install datasets")
+
+    print("  Loading FullStackBench from HuggingFace cache...")
+    ds = load_dataset("ByteDance/FullStackBench", "en", cache_dir=str(FULLSTACK_HF_CACHE_DIR), split="test")
+    test_split = list(ds)
+
+    records = []
+    for category in FULLSTACK_CATEGORIES:
+        pool = [
+            ex for ex in test_split
+            if ex["labels"].get("category") == category
+            and ex["id"] not in training_fps
+        ]
+        n = min(NUM_EVAL_QUERIES, len(pool))
+        if n < NUM_EVAL_QUERIES:
+            print(f"  [warn] {category}: only {n} held-out examples (requested {NUM_EVAL_QUERIES})")
+        sampled = rng.sample(pool, n)
+        for ex in sampled:
+            records.append({
+                "id": ex["id"],
+                "content": ex["content"],
+                "category": ex["labels"]["category"],
+                "raw_example": dict(ex),
+            })
+        print(f"  {category}: {n} held-out queries")
+
+    return records
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +331,9 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     elif dataset == "MMLUPro":
         from benchmarks.mmlu_pro import MMLUProBenchmark
         benchmark = MMLUProBenchmark(name=dataset, file_path="", log_path=str(log_dir))
+    elif dataset == "FullStack":
+        from benchmarks.fullstack import FullStackBenchmark
+        benchmark = FullStackBenchmark(name=dataset, file_path="", log_path=str(log_dir))
     else:
         from benchmarks.mmlu import MMLUBenchmark
         benchmark = MMLUBenchmark(name=dataset, file_path="", log_path=str(log_dir))
@@ -347,7 +397,8 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         print(f"    Tokens per query  — avg input: {avg_in:.0f}  avg output: {avg_out:.0f}  avg total: {avg_in + avg_out:.0f}")
         print(f"    Tokens run total  — input: {total_in:,}  output: {total_out:,}  total: {total_in + total_out:,}")
 
-        per_subject = df.groupby("subject")["score"].mean().to_dict()
+        group_col = "category" if dataset == "FullStack" else "subject"
+        per_subject = df.groupby(group_col)["score"].mean().to_dict()
         for subj, score in per_subject.items():
             accumulated.setdefault(subj, []).append(score)
         round_averages.append(avg_score)
@@ -375,6 +426,8 @@ def save_results(results: dict, dataset: str, best_round: int):
         subjects = MATH_SUBJECTS
     elif dataset == "MMLUPro":
         subjects = MMLU_PRO_SUBJECTS
+    elif dataset == "FullStack":
+        subjects = FULLSTACK_CATEGORIES
     else:
         subjects = MMLU_SUBJECTS
 
@@ -417,6 +470,8 @@ async def main():
         held_out = build_math_heldout(rng)
     elif DATASET == "MMLUPro":
         held_out = build_mmlu_pro_heldout(rng)
+    elif DATASET == "FullStack":
+        held_out = build_fullstack_heldout(rng)
     else:
         held_out = build_mmlu_heldout(rng)
 
@@ -428,6 +483,8 @@ async def main():
         subjects = MATH_SUBJECTS
     elif DATASET == "MMLUPro":
         subjects = MMLU_PRO_SUBJECTS
+    elif DATASET == "FullStack":
+        subjects = FULLSTACK_CATEGORIES
     else:
         subjects = MMLU_SUBJECTS
     print("\n" + "=" * 70)

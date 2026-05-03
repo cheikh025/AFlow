@@ -75,17 +75,16 @@ class FullStackBenchmark(BaseBenchmark):
         return 0.0, prediction
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), retry=retry_if_exception_type(Exception), reraise=True)
-    async def _generate_output(self, graph, problem: str, programming_language: str):
-        return await graph(problem, programming_language)
+    async def _generate_output(self, graph, problem: str):
+        return await graph(problem)
 
     async def evaluate_problem(self, problem: dict, graph: Callable) -> Tuple:
         category = problem.get("category", "unknown")
         content = problem["content"]
-        programming_language = problem["programming_language"]
         raw_example = problem["raw_example"]
 
         try:
-            prediction, cost = await self._generate_output(graph, content, programming_language)
+            prediction, cost = await self._generate_output(graph, content)
 
             # SandboxFusion handles code extraction — pass the raw completion
             result = await asyncio.to_thread(self._call_sandbox, prediction, raw_example)

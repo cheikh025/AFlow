@@ -3,7 +3,6 @@
 
 import inspect
 import json
-import random
 import re
 from typing import Callable, List, Optional, Tuple
 
@@ -74,7 +73,7 @@ class MMLUProBenchmark(BaseBenchmark):
     def calculate_score(self, expected_output: str, prediction: str) -> Tuple[float, str]:
         extracted = self.extract_answer_letter(prediction) if prediction else None
         if extracted is None:
-            extracted = random.choice(self._CHOICES)
+            return 0.0, ""
         score = 1.0 if extracted == expected_output else 0.0
         return score, extracted
 
@@ -84,7 +83,7 @@ class MMLUProBenchmark(BaseBenchmark):
         except OSError:
             return "no code"
 
-    @retry(stop=stop_after_attempt(5), wait=wait_fixed(1), retry=retry_if_exception_type(Exception), reraise=True)
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), retry=retry_if_exception_type(Exception), reraise=True)
     async def _generate_output(self, graph, input_text: str):
         return await graph(input_text)
 

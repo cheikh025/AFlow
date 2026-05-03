@@ -31,7 +31,7 @@ EXPERIMENT_CONFIGS: Dict[str, ExperimentConfig] = {
     "FullStack": ExperimentConfig(
         dataset="FullStack",
         question_type="code",
-        operators=["Custom", "CustomCodeGenerate", "ScEnsemble"],
+        operators=["Custom", "RawCodeGenerate", "ScEnsemble"],
     ),
     "DROP": ExperimentConfig(
         dataset="DROP",

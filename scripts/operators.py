@@ -116,6 +116,22 @@ class CustomCodeGenerate(Operator):
         return response
 
 
+class RawCodeGenerate(Operator):
+    """
+    Code generation that returns raw LLM output without markdown fence stripping.
+    Required for FullStackBench: SandboxFusion handles code extraction internally,
+    and non-Python languages (C++, Java, Go, Rust) fail when fences are stripped.
+    """
+
+    def __init__(self, llm: AsyncLLM, name: str = "RawCodeGenerate"):
+        super().__init__(llm, name)
+
+    async def __call__(self, problem: str, instruction: str = ""):
+        prompt = instruction + problem
+        response = await self._fill_node(GenerateOp, prompt, mode=None)
+        return response
+
+
 class ScEnsemble(Operator):
     """
     Paper: Self-Consistency Improves Chain of Thought Reasoning in Language Models

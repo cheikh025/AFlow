@@ -1,10 +1,10 @@
 """
 Build FullStackBench validate JSONL for AFlow.
 
-Same subset as MAS optimizer:
-- Categories: Advanced Programming, Operating System, Machine Learning
-- Difficulty: hard, Locale: en, Seed: 42, N_PER_CATEGORY: 3
-- Total: 9 examples
+Matches RobustMAS experiment_fullstack.py scenario setup:
+- Categories: Advanced Programming, Scientific Computing, Data Analysis, Desktop and Web Development
+- No difficulty filter, Locale: en, Seed: 42, N_PER_CATEGORY: 20
+- Total: 80 examples
 
 Run:
     cd C:/Users/cheikh/Desktop/AFlow
@@ -17,11 +17,15 @@ from pathlib import Path
 
 from datasets import load_dataset
 
-CATEGORIES = ["Advanced Programming", "Operating System", "Machine Learning"]
-DIFFICULTY = "hard"
+CATEGORIES = [
+    "Advanced Programming",
+    "Scientific Computing",
+    "Data Analysis",
+    "Desktop and Web Development",
+]
 LOCALE = "en"
 SEED = 42
-N_PER_CATEGORY = 3
+N_PER_CATEGORY = 20
 
 OUTPUT_PATH = Path(__file__).parent / "datasets" / "fullstack_validate.jsonl"
 
@@ -39,17 +43,15 @@ def main():
         filtered = [
             ex for ex in data
             if ex["labels"].get("category") == category
-            and ex["labels"].get("difficulty") == DIFFICULTY
         ]
         sampled = rng.sample(filtered, min(N_PER_CATEGORY, len(filtered)))
-        print(f"  {category}: {len(filtered)} hard examples → sampled {len(sampled)}")
+        print(f"  {category}: {len(filtered)} examples → sampled {len(sampled)}")
 
         for ex in sampled:
             record = {
                 "id": ex["id"],
                 "content": ex["content"],
                 "category": ex["labels"]["category"],
-                "difficulty": ex["labels"]["difficulty"],
                 "programming_language": ex["labels"]["programming_language"],
                 # Full row stored so benchmark can pass it as provided_data to SandboxFusion
                 "raw_example": dict(ex),

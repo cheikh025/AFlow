@@ -51,13 +51,27 @@ def reset_experiment(dataset: str, dry_run: bool = False):
                 if not dry_run:
                     shutil.rmtree(entry)
 
-    # Remove optimizer state files
+    # Remove optimizer state files inside workflows/
     for filename in ["results.json", "processed_experience.json"]:
         target = workflows_path / filename
         if target.exists():
             deleted.append(str(target))
             if not dry_run:
                 target.unlink()
+
+    # Remove token_usage.json (lives one level above workflows/)
+    token_usage = workflows_path.parent / "token_usage.json"
+    if token_usage.exists():
+        deleted.append(str(token_usage))
+        if not dry_run:
+            token_usage.unlink()
+
+    # Remove __pycache__ directories everywhere under workflows/
+    for pycache in workflows_path.rglob("__pycache__"):
+        if pycache.is_dir():
+            deleted.append(str(pycache))
+            if not dry_run:
+                shutil.rmtree(pycache)
 
     if not deleted:
         print(f"[{dataset}] Nothing to clean — already at initial state.")
