@@ -35,7 +35,7 @@ if str(_AFLOW_DIR) not in sys.path:
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
 DATASET           = "MMLUPro"   # "MATH", "MMLU", "MMLUPro", or "FullStack"
-NUM_EVAL_QUERIES  = 50      # held-out queries per subject
+NUM_EVAL_QUERIES  = 100      # held-out queries per subject
 MAX_CONCURRENT    = 50      # concurrent evaluations
 SEED              = 99      # sampling seed (training used 42)
 VALIDATION_ROUNDS = 3       # how many times to evaluate (scores are averaged)
@@ -56,10 +56,10 @@ MMLU_SUBJECTS = [
     "econometrics",
 ]
 MMLU_PRO_SUBJECTS = [
-    "law",
     "history",
     "philosophy",
     "engineering",
+    "law",
 ]
 FULLSTACK_CATEGORIES = [
     "Advanced Programming",
@@ -113,7 +113,7 @@ def load_graph_class(dataset: str, round_n: int):
 def get_exec_llm_config():
     from scripts.async_llm import LLMsConfig
     models = LLMsConfig.default()
-    return models.get("openai/gpt-4o-mini-2024-07-18")
+    return models.get("openai/gpt-5.4-nano")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -372,6 +372,8 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
 
     accumulated: dict = {}  # subject -> list of per-round scores
     round_averages = []
+    round_avg_in: list = []
+    round_avg_out: list = []
 
     for round_i in range(1, VALIDATION_ROUNDS + 1):
         if VALIDATION_ROUNDS > 1:
@@ -402,6 +404,8 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         for subj, score in per_subject.items():
             accumulated.setdefault(subj, []).append(score)
         round_averages.append(avg_score)
+        round_avg_in.append(avg_in)
+        round_avg_out.append(avg_out)
 
         if VALIDATION_ROUNDS > 1:
             print(f"    Round {round_i} average score: {avg_score:.4f}")
@@ -409,18 +413,26 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     per_subject_avg = {subj: sum(scores) / len(scores) for subj, scores in accumulated.items()}
     per_subject_avg["__average__"] = sum(round_averages) / len(round_averages)
 
-    return per_subject_avg
+    token_avg = {
+        "avg_input_tokens":  sum(round_avg_in)  / len(round_avg_in),
+        "avg_output_tokens": sum(round_avg_out) / len(round_avg_out),
+        "avg_total_tokens":  sum(round_avg_in)  / len(round_avg_in) + sum(round_avg_out) / len(round_avg_out),
+    }
+
+    return per_subject_avg, token_avg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Results saving
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_results(results: dict, dataset: str, best_round: int):
+def save_results(results: dict, dataset: str, best_round: int, token_avg: dict = None, model_name: str = ""):
     out_dir = _AFLOW_DIR / f"workspace/{dataset}/workflows"
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_file = out_dir / f"heldout_eval_{dataset}_{timestamp}.txt"
+    safe_model = model_name.replace("/", "_") if model_name else ""
+    name = f"heldout_eval_{dataset}_{safe_model}_{timestamp}.txt" if safe_model else f"heldout_eval_{dataset}_{timestamp}.txt"
+    out_file = out_dir / name
 
     if dataset == "MATH":
         subjects = MATH_SUBJECTS
@@ -444,6 +456,11 @@ def save_results(results: dict, dataset: str, best_round: int):
             score = results.get(subj, float("nan"))
             f.write(f"  {subj:<35s}  {score:.4f}\n")
         f.write(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}\n")
+        if token_avg:
+            f.write("\n" + "-" * 70 + "\n")
+            f.write(f"  {'Avg input tokens/query':<35s}  {token_avg['avg_input_tokens']:.0f}\n")
+            f.write(f"  {'Avg output tokens/query':<35s}  {token_avg['avg_output_tokens']:.0f}\n")
+            f.write(f"  {'Avg total tokens/query':<35s}  {token_avg['avg_total_tokens']:.0f}\n")
         f.write("=" * 70 + "\n")
 
     print(f"\nResults saved to: {out_file}")
@@ -477,7 +494,7 @@ async def main():
 
     print(f"Total held-out examples: {len(held_out)}")
 
-    results = await evaluate(DATASET, best_round, held_out)
+    results, token_avg = await evaluate(DATASET, best_round, held_out)
 
     if DATASET == "MATH":
         subjects = MATH_SUBJECTS
@@ -495,7 +512,8 @@ async def main():
     print(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}")
     print("=" * 70)
 
-    save_results(results, DATASET, best_round)
+    exec_llm = get_exec_llm_config()
+    save_results(results, DATASET, best_round, token_avg, model_name=exec_llm.model)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ class LLMConfig:
         self.base_url = config.get("base_url", "https://oneapi.deepwisdom.ai/v1")
         self.top_p = config.get("top_p", 1)
         self.extra_body = config.get("extra_body", None)
+        self.max_tokens = config.get("max_tokens", None)
 
 class LLMsConfig:
     """Configuration manager for multiple LLM configurations"""
@@ -70,12 +71,13 @@ class LLMsConfig:
         
         # Create a config dictionary with the expected keys for LLMConfig
         llm_config = {
-            "model": llm_name,  # Use the key as the model name
+            "model": config.get("model", llm_name),
             "temperature": config.get("temperature", 1),
             "key": config.get("api_key"),  # Map api_key to key
             "base_url": config.get("base_url", "https://oneapi.deepwisdom.ai/v1"),
             "top_p": config.get("top_p", 1),
             "extra_body": config.get("extra_body", None),
+            "max_tokens": config.get("max_tokens", None),
         }
         
         # Create and return an LLMConfig instance with the specified configuration
@@ -199,6 +201,7 @@ class AsyncLLM:
             temperature=self.config.temperature,
             top_p=self.config.top_p,
             **({"extra_body": self.config.extra_body} if self.config.extra_body else {}),
+            **({"max_tokens": self.config.max_tokens} if self.config.max_tokens is not None else {}),
         )
 
         # Extract token usage from response

@@ -11,3 +11,4 @@ optimized
 *.json
 *.arrow
 .env
+Res/
