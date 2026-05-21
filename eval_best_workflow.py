@@ -410,8 +410,13 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         if VALIDATION_ROUNDS > 1:
             print(f"    Round {round_i} average score: {avg_score:.4f}")
 
+    import statistics
+
     per_subject_avg = {subj: sum(scores) / len(scores) for subj, scores in accumulated.items()}
     per_subject_avg["__average__"] = sum(round_averages) / len(round_averages)
+
+    per_subject_std = {subj: statistics.pstdev(scores) for subj, scores in accumulated.items()}
+    overall_std = statistics.pstdev(round_averages)
 
     token_avg = {
         "avg_input_tokens":  sum(round_avg_in)  / len(round_avg_in),
@@ -419,14 +424,14 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         "avg_total_tokens":  sum(round_avg_in)  / len(round_avg_in) + sum(round_avg_out) / len(round_avg_out),
     }
 
-    return per_subject_avg, token_avg
+    return per_subject_avg, per_subject_std, overall_std, token_avg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Results saving
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_results(results: dict, dataset: str, best_round: int, token_avg: dict = None, model_name: str = ""):
+def save_results(results: dict, dataset: str, best_round: int, token_avg: dict = None, model_name: str = "", per_subject_std: dict = None, overall_std: float = None):
     out_dir = _AFLOW_DIR / f"workspace/{dataset}/workflows"
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -449,13 +454,16 @@ def save_results(results: dict, dataset: str, best_round: int, token_avg: dict =
         f.write("=" * 70 + "\n")
         f.write(f"Best round:        {best_round}\n")
         f.write(f"Queries/subject:   {NUM_EVAL_QUERIES}\n")
+        f.write(f"Validation rounds: {VALIDATION_ROUNDS}\n")
         f.write(f"Sampling seed:     {SEED}\n")
         f.write(f"Date:              {timestamp}\n")
         f.write("-" * 70 + "\n\n")
         for subj in subjects:
             score = results.get(subj, float("nan"))
-            f.write(f"  {subj:<35s}  {score:.4f}\n")
-        f.write(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}\n")
+            std = per_subject_std.get(subj, 0.0) if per_subject_std else 0.0
+            f.write(f"  {subj:<35s}  {score:.4f}  ±{std:.4f}\n")
+        avg_std = overall_std if overall_std is not None else 0.0
+        f.write(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}  ±{avg_std:.4f}\n")
         if token_avg:
             f.write("\n" + "-" * 70 + "\n")
             f.write(f"  {'Avg input tokens/query':<35s}  {token_avg['avg_input_tokens']:.0f}\n")
@@ -494,7 +502,7 @@ async def main():
 
     print(f"Total held-out examples: {len(held_out)}")
 
-    results, token_avg = await evaluate(DATASET, best_round, held_out)
+    results, per_subject_std, overall_std, token_avg = await evaluate(DATASET, best_round, held_out)
 
     if DATASET == "MATH":
         subjects = MATH_SUBJECTS
@@ -508,12 +516,15 @@ async def main():
     print(f"RESULTS  —  {DATASET}  (round {best_round})")
     print("=" * 70)
     for subj in subjects:
-        print(f"  {subj:<35s}  {results.get(subj, float('nan')):.4f}")
-    print(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}")
+        avg = results.get(subj, float('nan'))
+        std = per_subject_std.get(subj, 0.0)
+        print(f"  {subj:<35s}  {avg:.4f}  ±{std:.4f}")
+    print(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}  ±{overall_std:.4f}")
     print("=" * 70)
 
     exec_llm = get_exec_llm_config()
-    save_results(results, DATASET, best_round, token_avg, model_name=exec_llm.model)
+    save_results(results, DATASET, best_round, token_avg, model_name=exec_llm.model,
+                 per_subject_std=per_subject_std, overall_std=overall_std)
 
 
 if __name__ == "__main__":
