@@ -19,6 +19,7 @@ class LLMConfig:
         self.top_p = config.get("top_p", 1)
         self.extra_body = config.get("extra_body", None)
         self.max_tokens = config.get("max_tokens", None)
+        self.seed       = config.get("seed", None)
 
 class LLMsConfig:
     """Configuration manager for multiple LLM configurations"""
@@ -202,6 +203,7 @@ class AsyncLLM:
             top_p=self.config.top_p,
             **({"extra_body": self.config.extra_body} if self.config.extra_body else {}),
             **({"max_tokens": self.config.max_tokens} if self.config.max_tokens is not None else {}),
+            **({"seed": self.config.seed} if self.config.seed is not None else {}),
         )
 
         # Extract token usage from response

@@ -378,6 +378,7 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     for round_i in range(1, VALIDATION_ROUNDS + 1):
         if VALIDATION_ROUNDS > 1:
             print(f"\n--- Validation round {round_i}/{VALIDATION_ROUNDS} ---")
+        llm_config.seed = round_i - 1  # seed 0, 1, 2 across rounds
 
         from tqdm.asyncio import tqdm_asyncio
         tasks = [evaluate_one(p) for p in held_out]
