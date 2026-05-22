@@ -22,8 +22,8 @@ class FullStackBenchmark(BaseBenchmark):
         name: str,
         file_path: str,
         log_path: str,
-        compile_timeout: int = 50,
-        run_timeout: int = 50,
+        compile_timeout: int = 120,
+        run_timeout: int = 120,
     ):
         super().__init__(name, file_path, log_path)
         self.compile_timeout = compile_timeout
@@ -34,6 +34,9 @@ class FullStackBenchmark(BaseBenchmark):
 
     def _call_sandbox(self, prediction: str, raw_example: dict) -> dict:
         """Submit raw model completion to SandboxFusion. Returns pass_rate and accepted."""
+        if "```" not in prediction:
+            lang = raw_example.get("labels", {}).get("programming_language", "python")
+            prediction = f"``` {lang}\n{prediction}\n```"
         try:
             response = requests.post(
                 f"{self.sandbox_endpoint}/submit",

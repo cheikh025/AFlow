@@ -275,6 +275,7 @@ def build_fullstack_heldout(rng: random.Random) -> List[dict]:
     """
     Load FullStackBench test examples for the 4 categories, excluding training
     fingerprints (by id), then sample up to NUM_EVAL_QUERIES per category.
+    Stratified: 50 hard + 50 medium, no easy (capped at available if fewer).
     """
     training_fps = load_training_fingerprints(FULLSTACK_VALIDATE_JSONL, "id")
 
@@ -287,6 +288,9 @@ def build_fullstack_heldout(rng: random.Random) -> List[dict]:
     ds = load_dataset("ByteDance/FullStackBench", "en", cache_dir=str(FULLSTACK_HF_CACHE_DIR), split="test")
     test_split = list(ds)
 
+    n_hard_target   = NUM_EVAL_QUERIES // 2
+    n_medium_target = NUM_EVAL_QUERIES - n_hard_target
+
     records = []
     for category in FULLSTACK_CATEGORIES:
         pool = [
@@ -294,18 +298,22 @@ def build_fullstack_heldout(rng: random.Random) -> List[dict]:
             if ex["labels"].get("category") == category
             and ex["id"] not in training_fps
         ]
-        n = min(NUM_EVAL_QUERIES, len(pool))
-        if n < NUM_EVAL_QUERIES:
-            print(f"  [warn] {category}: only {n} held-out examples (requested {NUM_EVAL_QUERIES})")
-        sampled = rng.sample(pool, n)
-        for ex in sampled:
+        hard   = [ex for ex in pool if ex["labels"].get("difficulty") == "hard"]
+        medium = [ex for ex in pool if ex["labels"].get("difficulty") == "medium"]
+
+        n_hard   = min(n_hard_target,   len(hard))
+        n_medium = min(n_medium_target, len(medium))
+
+        for ex in rng.sample(hard, n_hard) + rng.sample(medium, n_medium):
             records.append({
                 "id": ex["id"],
                 "content": ex["content"],
                 "category": ex["labels"]["category"],
+                "difficulty": ex["labels"]["difficulty"],
+                "programming_language": ex["labels"]["programming_language"],
                 "raw_example": dict(ex),
             })
-        print(f"  {category}: {n} held-out queries")
+        print(f"  {category}: {n_hard}h + {n_medium}m = {n_hard + n_medium} held-out queries")
 
     return records
 
