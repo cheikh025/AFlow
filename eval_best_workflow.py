@@ -34,12 +34,12 @@ if str(_AFLOW_DIR) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-DATASET           = "MMLUPro"   # "MATH", "MMLU", "MMLUPro", or "FullStack"
+DATASET           = "MATH"   # "MATH", "MMLU", "MMLUPro", or "FullStack"
 NUM_EVAL_QUERIES  = 100      # held-out queries per subject
 MAX_CONCURRENT    = 50      # concurrent evaluations
 SEED              = 99      # sampling seed (training used 42)
 VALIDATION_ROUNDS = 3       # how many times to evaluate (scores are averaged)
-QUERY_TIMEOUT     = 120     # seconds before a single query is abandoned (0 = no timeout)
+QUERY_TIMEOUT     = 300     # seconds before a single query is abandoned (0 = no timeout)
 # ──────────────────────────────────────────────────────────────────────────────
 
 MATH_SUBJECTS = [
@@ -62,10 +62,10 @@ MMLU_PRO_SUBJECTS = [
     "law",
 ]
 FULLSTACK_CATEGORIES = [
-    "Advanced Programming",
-    "Scientific Computing",
-    "Data Analysis",
-    "Desktop and Web Development",
+    "Mathematics",
+    "DataBase",
+    "Machine Learning",
+    "Software Engineering",
 ]
 MATH_LEVEL = "Level 5"
 
@@ -113,7 +113,7 @@ def load_graph_class(dataset: str, round_n: int):
 def get_exec_llm_config():
     from scripts.async_llm import LLMsConfig
     models = LLMsConfig.default()
-    return models.get("openai/gpt-5.4-nano")
+    return models.get("deepseek/deepseek-v4-flash-noreason")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -299,14 +299,15 @@ def build_fullstack_heldout(rng: random.Random) -> List[dict]:
         medium = [ex for ex in pool if ex["labels"].get("difficulty") == "medium"]
         easy   = [ex for ex in pool if ex["labels"].get("difficulty") == "easy"]
 
-        target_hard  = NUM_EVAL_QUERIES // 2
-        got_hard     = rng.sample(hard,   min(target_hard,         len(hard)))
-        remaining    = NUM_EVAL_QUERIES - len(got_hard)
-        got_medium   = rng.sample(medium, min(remaining,           len(medium)))
-        remaining   -= len(got_medium)
-        got_easy     = rng.sample(easy,   min(remaining,           len(easy)))
+        result = list(hard)
+        remaining = NUM_EVAL_QUERIES - len(result)
+        if remaining > 0:
+            result += medium[:remaining]
+        remaining = NUM_EVAL_QUERIES - len(result)
+        if remaining > 0:
+            result += easy[:remaining]
 
-        for ex in got_hard + got_medium + got_easy:
+        for ex in result:
             records.append({
                 "id": ex["id"],
                 "content": ex["content"],
@@ -315,8 +316,8 @@ def build_fullstack_heldout(rng: random.Random) -> List[dict]:
                 "programming_language": ex["labels"]["programming_language"],
                 "raw_example": dict(ex),
             })
-        n = len(got_hard) + len(got_medium) + len(got_easy)
-        print(f"  {category}: {len(got_hard)}h + {len(got_medium)}m + {len(got_easy)}e = {n} held-out queries")
+        n = len(result)
+        print(f"  {category}: {n} held-out queries")
 
     return records
 
