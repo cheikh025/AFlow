@@ -173,7 +173,7 @@ class CodeFormatter(BaseFormatter):
                 return False, None
             
             # Return the sanitized code
-            result = {"response": sanitized_code}
+            result = {"code": sanitized_code}
             return True, result
             
         except Exception as e:
