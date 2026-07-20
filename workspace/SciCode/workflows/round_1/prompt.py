@@ -1,0 +1,1 @@
+SCICODE_SOLVE_PROMPT = """Return only the executable Python implementation requested by the supplied SciCode step. Preserve the required function signature and do not repeat dependencies or earlier functions.\n\n"""

@@ -47,6 +47,7 @@ class Optimizer:
         max_rounds: int = 20,
         validation_rounds: int = 5,
         token_budget: int = None,
+        api_concurrency: int = 20,
     ) -> None:
         self.optimize_llm_config = opt_llm_config
         self.optimize_llm = create_llm_instance(self.optimize_llm_config)
@@ -66,6 +67,9 @@ class Optimizer:
         self.max_rounds = max_rounds
         self.validation_rounds = validation_rounds
         self.budget = BudgetTracker(token_budget)
+        if api_concurrency < 1:
+            raise ValueError("api_concurrency must be at least 1")
+        self.api_concurrency = api_concurrency
 
         self.graph_utils = GraphUtils(self.root_path)
         self.data_utils = DataUtils(self.root_path)

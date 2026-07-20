@@ -1,0 +1,22 @@
+{
+    "Custom": {
+        "description": "Predicts one causal Mind2Web action from the task, gold prior actions, pruned page context, and ranked candidate list.",
+        "interface": "custom(input: str, instruction: str) -> dict with key 'response' of type str"
+    },
+    "AnswerGenerate": {
+        "description": "Generates an explicit step-by-step thought process and a final JSON action for the current Mind2Web step.",
+        "interface": "answer_generate(input: str) -> dict with keys 'thought' and 'answer' of type str"
+    },
+    "ScEnsemble": {
+        "description": "Selects the strongest JSON action from multiple independent candidate predictions.",
+        "interface": "sc_ensemble(solutions: List[str], problem: str) -> dict with key 'response' of type str"
+    },
+    "Review": {
+        "description": "Reviews whether an action uses a listed candidate, a valid operation, and the correct value semantics.",
+        "interface": "review(problem: str, solution: str) -> dict with keys 'review_result' and 'feedback'"
+    },
+    "Revise": {
+        "description": "Revises a candidate action using structured reviewer feedback.",
+        "interface": "revise(problem: str, solution: str, feedback: str) -> dict with key 'solution' of type str"
+    }
+}

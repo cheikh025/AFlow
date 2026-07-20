@@ -1,0 +1,28 @@
+{
+    "fitness": 0.24472096530920062,
+    "field_subproblem_pass_rates": {
+        "mathematics": 0.25,
+        "physics": 0.17647058823529413,
+        "material_science": 0.3076923076923077
+    },
+    "field_subproblem_counts": {
+        "mathematics": {
+            "passed": 2,
+            "total": 8
+        },
+        "physics": {
+            "passed": 3,
+            "total": 17
+        },
+        "material_science": {
+            "passed": 4,
+            "total": 13
+        }
+    },
+    "global_subproblem_pass_rate": 0.23684210526315788,
+    "passed_subproblems": 9,
+    "total_subproblems": 38,
+    "main_problem_resolve_rate": 0.1111111111111111,
+    "passed_main_problems": 1,
+    "total_main_problems": 9
+}

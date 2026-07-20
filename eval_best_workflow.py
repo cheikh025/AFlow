@@ -5,7 +5,7 @@ Evaluates the best AFlow workflow (highest validation score) on held-out
 queries that were NOT seen during training (validation phase).
 
 Configuration:
-    Set DATASET = "MATH", "MMLU", or "MMLUPro" below, then run from the AFlow directory:
+    Set DATASET below, then run from the AFlow directory:
         cd Baseline/AFlow
         python eval_best_workflow.py
 
@@ -34,11 +34,13 @@ if str(_AFLOW_DIR) not in sys.path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─── CONFIGURATION ────────────────────────────────────────────────────────────
-DATASET           = "MATH"   # "MATH", "MMLU", "MMLUPro", or "FullStack"
+DATASET           = "MATH"   # "MATH", "MMLU", "MMLUPro", "FullStack", "SciCode", or "Mind2Web"
 NUM_EVAL_QUERIES  = 100      # held-out queries per subject
 MAX_CONCURRENT    = 50      # concurrent evaluations
 SEED              = 99      # sampling seed (training used 42)
 VALIDATION_ROUNDS = 3       # how many times to evaluate (scores are averaged)
+SCICODE_VALIDATION_ROUNDS = 1  # ReMAS held-out default
+MIND2WEB_VALIDATION_ROUNDS = 1  # ReMAS held-out default
 QUERY_TIMEOUT     = 300     # seconds before a single query is abandoned (0 = no timeout)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -67,6 +69,8 @@ FULLSTACK_CATEGORIES = [
     "Machine Learning",
     "Software Engineering",
 ]
+SCICODE_FIELDS = ["mathematics", "physics", "material_science"]
+MIND2WEB_DOMAINS = ["travel", "shopping", "entertainment"]
 MATH_LEVEL = "Level 5"
 
 # ─── paths (relative to AFlow dir) ───────────────────────────────────────────
@@ -78,6 +82,8 @@ MMLU_HF_CACHE_DIR           = _AFLOW_DIR / "data/mmlu_hf_cache"
 MMLU_PRO_HF_CACHE_DIR       = _AFLOW_DIR / "data/mmlu_pro_hf_cache"
 FULLSTACK_VALIDATE_JSONL    = _AFLOW_DIR / "data/datasets/fullstack_validate.jsonl"
 FULLSTACK_HF_CACHE_DIR      = _AFLOW_DIR / "data/fullstack_hf_cache"
+SCICODE_TEST_JSONL          = _AFLOW_DIR / "data/datasets/scicode_test.jsonl"
+MIND2WEB_TEST_JSONL         = _AFLOW_DIR / "data/datasets/mind2web_test.jsonl"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -322,6 +328,44 @@ def build_fullstack_heldout(rng: random.Random) -> List[dict]:
     return records
 
 
+def build_scicode_heldout() -> List[dict]:
+    """Load the frozen ReMAS-compatible held-out set without resampling."""
+    if not SCICODE_TEST_JSONL.is_file():
+        raise FileNotFoundError(
+            f"SciCode held-out data not found: {SCICODE_TEST_JSONL}\n"
+            "Run: python data/build_scicode_data.py"
+        )
+    from benchmarks.scicode_spec import validate_manifest_records
+
+    with SCICODE_TEST_JSONL.open(encoding="utf-8") as stream:
+        records = [json.loads(line) for line in stream if line.strip()]
+    validate_manifest_records(
+        records,
+        "heldout",
+        SCICODE_TEST_JSONL.with_name("scicode_manifest.json"),
+    )
+    return records
+
+
+def build_mind2web_heldout() -> List[dict]:
+    """Load the frozen ReMAS-compatible held-out set without resampling."""
+    if not MIND2WEB_TEST_JSONL.is_file():
+        raise FileNotFoundError(
+            f"Mind2Web held-out data not found: {MIND2WEB_TEST_JSONL}\n"
+            "Run: python data/build_mind2web_data.py"
+        )
+    from benchmarks.mind2web_spec import validate_manifest_records
+
+    with MIND2WEB_TEST_JSONL.open(encoding="utf-8") as stream:
+        records = [json.loads(line) for line in stream if line.strip()]
+    validate_manifest_records(
+        records,
+        "heldout",
+        MIND2WEB_TEST_JSONL.with_name("mind2web_manifest.json"),
+    )
+    return records
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -346,6 +390,13 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     elif dataset == "FullStack":
         from benchmarks.fullstack import FullStackBenchmark
         benchmark = FullStackBenchmark(name=dataset, file_path="", log_path=str(log_dir))
+    elif dataset == "SciCode":
+        from benchmarks.scicode import SciCodeBenchmark
+        benchmark = SciCodeBenchmark(name=dataset, file_path="", log_path=str(log_dir))
+        benchmark.ensure_ready()
+    elif dataset == "Mind2Web":
+        from benchmarks.mind2web import Mind2WebBenchmark
+        benchmark = Mind2WebBenchmark(name=dataset, file_path="", log_path=str(log_dir))
     else:
         from benchmarks.mmlu import MMLUBenchmark
         benchmark = MMLUBenchmark(name=dataset, file_path="", log_path=str(log_dir))
@@ -353,18 +404,33 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
     base_columns = benchmark.get_result_columns()
     all_columns = base_columns + ["input_tokens", "output_tokens", "total_tokens"]
 
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    max_concurrent = min(MAX_CONCURRENT, getattr(benchmark, "max_concurrent_tasks", MAX_CONCURRENT))
+    semaphore = asyncio.Semaphore(max_concurrent)
+    mind2web_call_gate = asyncio.Semaphore(getattr(benchmark, "max_llm_calls", 32))
 
     async def evaluate_one(problem: dict) -> tuple:
         """Evaluate a single query with its own Workflow instance for isolated token tracking."""
         async with semaphore:
             # Fresh instance per query → its TokenUsageTracker captures only this query's LLM calls,
             # even when the workflow internally makes multiple LLM calls (e.g. ScEnsemble).
-            graph = WorkflowClass(name=dataset, llm_config=llm_config, dataset=dataset)
+            if dataset == "Mind2Web":
+                from benchmarks.mind2web import Mind2WebWorkflowFactory
+
+                graph = Mind2WebWorkflowFactory(
+                    workflow_class=WorkflowClass,
+                    name=dataset,
+                    llm_config=llm_config,
+                    dataset=dataset,
+                    max_llm_calls=getattr(benchmark, "max_llm_calls", 32),
+                )
+                # Share one request gate across every task in this evaluation.
+                graph.call_gate = mind2web_call_gate
+            else:
+                graph = WorkflowClass(name=dataset, llm_config=llm_config, dataset=dataset)
             n_cols = len(base_columns)
             try:
                 coro = benchmark.evaluate_problem(problem, graph)
-                if QUERY_TIMEOUT > 0:
+                if QUERY_TIMEOUT > 0 and dataset not in {"SciCode", "Mind2Web"}:
                     result = await asyncio.wait_for(coro, timeout=QUERY_TIMEOUT)
                 else:
                     result = await coro
@@ -379,25 +445,42 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
                 failed = (subject,) + ("",) * (n_cols - 3) + (0.0, 0.0)
                 return failed + (0, 0, 0)
 
+    if dataset == "SciCode":
+        eval_rounds = SCICODE_VALIDATION_ROUNDS
+    elif dataset == "Mind2Web":
+        eval_rounds = MIND2WEB_VALIDATION_ROUNDS
+    else:
+        eval_rounds = VALIDATION_ROUNDS
     print(f"\nRunning evaluation on {len(held_out)} queries "
-          f"(max_concurrent={MAX_CONCURRENT}, validation_rounds={VALIDATION_ROUNDS}) …")
+          f"(max_concurrent={max_concurrent}, validation_rounds={eval_rounds}) …")
 
     accumulated: dict = {}  # subject -> list of per-round scores
     round_averages = []
     round_avg_in: list = []
     round_avg_out: list = []
+    scicode_round_metrics: list[dict] = []
+    mind2web_round_metrics: list[dict] = []
 
-    for round_i in range(1, VALIDATION_ROUNDS + 1):
-        if VALIDATION_ROUNDS > 1:
-            print(f"\n--- Validation round {round_i}/{VALIDATION_ROUNDS} ---")
+    for round_i in range(1, eval_rounds + 1):
+        if eval_rounds > 1:
+            print(f"\n--- Validation round {round_i}/{eval_rounds} ---")
         llm_config.seed = round_i - 1  # seed 0, 1, 2 across rounds
 
         from tqdm.asyncio import tqdm_asyncio
         tasks = [evaluate_one(p) for p in held_out]
-        results_raw = await tqdm_asyncio.gather(*tasks, desc=f"Evaluating {dataset} (round {round_i}/{VALIDATION_ROUNDS})", total=len(tasks))
+        results_raw = await tqdm_asyncio.gather(*tasks, desc=f"Evaluating {dataset} (round {round_i}/{eval_rounds})", total=len(tasks))
 
         df = pd.DataFrame(results_raw, columns=all_columns)
-        avg_score = df["score"].mean()
+        if dataset == "SciCode":
+            metrics = benchmark.aggregate_dataframe(df)
+            avg_score = metrics["fitness"]
+            scicode_round_metrics.append(metrics)
+        elif dataset == "Mind2Web":
+            metrics = benchmark.aggregate_dataframe(df)
+            avg_score = metrics["fitness"]
+            mind2web_round_metrics.append(metrics)
+        else:
+            avg_score = df["score"].mean()
 
         # Save CSV (includes token columns)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -407,26 +490,75 @@ async def evaluate(dataset: str, best_round: int, held_out: List[dict]) -> dict:
         # Token summary for this round
         total_in  = int(df["input_tokens"].sum())
         total_out = int(df["output_tokens"].sum())
-        avg_in    = df["input_tokens"].mean()
-        avg_out   = df["output_tokens"].mean()
-        print(f"    Tokens per query  — avg input: {avg_in:.0f}  avg output: {avg_out:.0f}  avg total: {avg_in + avg_out:.0f}")
+        if dataset == "SciCode":
+            token_units = max(int(df["total_subproblems"].sum()), 1)
+            avg_in = total_in / token_units
+            avg_out = total_out / token_units
+        elif dataset == "Mind2Web":
+            token_units = max(int(df["num_steps"].sum()), 1)
+            avg_in = total_in / token_units
+            avg_out = total_out / token_units
+        else:
+            avg_in = df["input_tokens"].mean()
+            avg_out = df["output_tokens"].mean()
+        token_label = (
+            "subproblem" if dataset == "SciCode"
+            else "action" if dataset == "Mind2Web"
+            else "query"
+        )
+        print(f"    Tokens per {token_label}  — avg input: {avg_in:.0f}  avg output: {avg_out:.0f}  avg total: {avg_in + avg_out:.0f}")
         print(f"    Tokens run total  — input: {total_in:,}  output: {total_out:,}  total: {total_in + total_out:,}")
 
-        group_col = "category" if dataset == "FullStack" else "subject"
-        per_subject = df.groupby(group_col)["score"].mean().to_dict()
+        if dataset == "SciCode":
+            per_subject = metrics["field_subproblem_pass_rates"]
+        elif dataset == "Mind2Web":
+            per_subject = {
+                scenario_id: values["macro_step_success_rate"]
+                for scenario_id, values in metrics["scenarios"].items()
+            }
+        else:
+            group_col = "category" if dataset == "FullStack" else "subject"
+            per_subject = df.groupby(group_col)["score"].mean().to_dict()
         for subj, score in per_subject.items():
             accumulated.setdefault(subj, []).append(score)
         round_averages.append(avg_score)
         round_avg_in.append(avg_in)
         round_avg_out.append(avg_out)
 
-        if VALIDATION_ROUNDS > 1:
+        if eval_rounds > 1:
             print(f"    Round {round_i} average score: {avg_score:.4f}")
 
     import statistics
 
     per_subject_avg = {subj: sum(scores) / len(scores) for subj, scores in accumulated.items()}
     per_subject_avg["__average__"] = sum(round_averages) / len(round_averages)
+    if dataset == "SciCode":
+        per_subject_avg["__main_problem_resolve_rate__"] = sum(
+            item["main_problem_resolve_rate"] for item in scicode_round_metrics
+        ) / len(scicode_round_metrics)
+        per_subject_avg["__global_subproblem_pass_rate__"] = sum(
+            item["global_subproblem_pass_rate"] for item in scicode_round_metrics
+        ) / len(scicode_round_metrics)
+        per_subject_avg["__passed_main_problems__"] = sum(
+            item["passed_main_problems"] for item in scicode_round_metrics
+        ) / len(scicode_round_metrics)
+        per_subject_avg["__total_main_problems__"] = scicode_round_metrics[0][
+            "total_main_problems"
+        ]
+    elif dataset == "Mind2Web":
+        metric_keys = (
+            "macro_element_acc",
+            "macro_action_f1",
+            "task_success_rate",
+            "macro_candidate_recall",
+            "generation_errors",
+        )
+        for key in metric_keys:
+            per_subject_avg[f"__{key}__"] = sum(
+                item[key] for item in mind2web_round_metrics
+            ) / len(mind2web_round_metrics)
+        per_subject_avg["__n_tasks__"] = mind2web_round_metrics[0]["n_tasks"]
+        per_subject_avg["__n_steps__"] = mind2web_round_metrics[0]["n_steps"]
 
     per_subject_std = {subj: statistics.pstdev(scores) for subj, scores in accumulated.items()}
     overall_std = statistics.pstdev(round_averages)
@@ -458,6 +590,10 @@ def save_results(results: dict, dataset: str, best_round: int, token_avg: dict =
         subjects = MMLU_PRO_SUBJECTS
     elif dataset == "FullStack":
         subjects = FULLSTACK_CATEGORIES
+    elif dataset == "SciCode":
+        subjects = SCICODE_FIELDS
+    elif dataset == "Mind2Web":
+        subjects = MIND2WEB_DOMAINS
     else:
         subjects = MMLU_SUBJECTS
 
@@ -466,8 +602,17 @@ def save_results(results: dict, dataset: str, best_round: int, token_avg: dict =
         f.write(f"AFLOW HELD-OUT EVALUATION — {dataset}\n")
         f.write("=" * 70 + "\n")
         f.write(f"Best round:        {best_round}\n")
-        f.write(f"Queries/subject:   {NUM_EVAL_QUERIES}\n")
-        f.write(f"Validation rounds: {VALIDATION_ROUNDS}\n")
+        if dataset == "SciCode":
+            query_label, query_count = "Fixed main problems", 10
+            validation_rounds = SCICODE_VALIDATION_ROUNDS
+        elif dataset == "Mind2Web":
+            query_label, query_count = "Fixed tasks/domain", 100
+            validation_rounds = MIND2WEB_VALIDATION_ROUNDS
+        else:
+            query_label, query_count = "Queries/subject", NUM_EVAL_QUERIES
+            validation_rounds = VALIDATION_ROUNDS
+        f.write(f"{query_label}:   {query_count}\n")
+        f.write(f"Validation rounds: {validation_rounds}\n")
         f.write(f"Sampling seed:     {SEED}\n")
         f.write(f"Date:              {timestamp}\n")
         f.write("-" * 70 + "\n\n")
@@ -477,11 +622,40 @@ def save_results(results: dict, dataset: str, best_round: int, token_avg: dict =
             f.write(f"  {subj:<35s}  {score:.4f}  ±{std:.4f}\n")
         avg_std = overall_std if overall_std is not None else 0.0
         f.write(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}  ±{avg_std:.4f}\n")
+        if dataset == "SciCode":
+            f.write(
+                f"  {'Global subproblem pass rate':<35s}  "
+                f"{results['__global_subproblem_pass_rate__']:.4f}\n"
+            )
+            f.write(
+                f"  {'Main problem resolve rate':<35s}  "
+                f"{results['__main_problem_resolve_rate__']:.4f}  "
+                f"({results['__passed_main_problems__']:.0f}/"
+                f"{results['__total_main_problems__']:.0f})\n"
+            )
+        elif dataset == "Mind2Web":
+            f.write(f"  {'Element accuracy':<35s}  {results['__macro_element_acc__']:.4f}\n")
+            f.write(f"  {'Action / operation F1':<35s}  {results['__macro_action_f1__']:.4f}\n")
+            f.write(f"  {'Task success rate':<35s}  {results['__task_success_rate__']:.4f}\n")
+            f.write(f"  {'Candidate recall':<35s}  {results['__macro_candidate_recall__']:.4f}\n")
+            f.write(
+                f"  {'Generation errors':<35s}  "
+                f"{results['__generation_errors__']:.0f}\n"
+            )
+            f.write(
+                f"  {'Evaluated tasks/actions':<35s}  "
+                f"{results['__n_tasks__']:.0f}/{results['__n_steps__']:.0f}\n"
+            )
         if token_avg:
             f.write("\n" + "-" * 70 + "\n")
-            f.write(f"  {'Avg input tokens/query':<35s}  {token_avg['avg_input_tokens']:.0f}\n")
-            f.write(f"  {'Avg output tokens/query':<35s}  {token_avg['avg_output_tokens']:.0f}\n")
-            f.write(f"  {'Avg total tokens/query':<35s}  {token_avg['avg_total_tokens']:.0f}\n")
+            token_unit = (
+                "subproblem" if dataset == "SciCode"
+                else "action" if dataset == "Mind2Web"
+                else "query"
+            )
+            f.write(f"  {f'Avg input tokens/{token_unit}':<35s}  {token_avg['avg_input_tokens']:.0f}\n")
+            f.write(f"  {f'Avg output tokens/{token_unit}':<35s}  {token_avg['avg_output_tokens']:.0f}\n")
+            f.write(f"  {f'Avg total tokens/{token_unit}':<35s}  {token_avg['avg_total_tokens']:.0f}\n")
         f.write("=" * 70 + "\n")
 
     print(f"\nResults saved to: {out_file}")
@@ -497,7 +671,8 @@ async def main():
 
     print("=" * 70)
     print(f"AFLOW HELD-OUT EVALUATION  —  {DATASET}")
-    print(f"Queries/subject: {NUM_EVAL_QUERIES}  |  seed: {SEED}")
+    query_count = 10 if DATASET == "SciCode" else 100 if DATASET == "Mind2Web" else NUM_EVAL_QUERIES
+    print(f"Queries/subject: {query_count}  |  seed: {SEED}")
     print("=" * 70)
 
     best_round = find_best_round(DATASET)
@@ -510,6 +685,10 @@ async def main():
         held_out = build_mmlu_pro_heldout(rng)
     elif DATASET == "FullStack":
         held_out = build_fullstack_heldout(rng)
+    elif DATASET == "SciCode":
+        held_out = build_scicode_heldout()
+    elif DATASET == "Mind2Web":
+        held_out = build_mind2web_heldout()
     else:
         held_out = build_mmlu_heldout(rng)
 
@@ -523,6 +702,10 @@ async def main():
         subjects = MMLU_PRO_SUBJECTS
     elif DATASET == "FullStack":
         subjects = FULLSTACK_CATEGORIES
+    elif DATASET == "SciCode":
+        subjects = SCICODE_FIELDS
+    elif DATASET == "Mind2Web":
+        subjects = MIND2WEB_DOMAINS
     else:
         subjects = MMLU_SUBJECTS
     print("\n" + "=" * 70)
@@ -533,6 +716,27 @@ async def main():
         std = per_subject_std.get(subj, 0.0)
         print(f"  {subj:<35s}  {avg:.4f}  ±{std:.4f}")
     print(f"\n  {'AVERAGE':<35s}  {results['__average__']:.4f}  ±{overall_std:.4f}")
+    if DATASET == "SciCode":
+        print(
+            f"  {'Global subproblem pass rate':<35s}  "
+            f"{results['__global_subproblem_pass_rate__']:.4f}"
+        )
+        print(
+            f"  {'Main problem resolve rate':<35s}  "
+            f"{results['__main_problem_resolve_rate__']:.4f}  "
+            f"({results['__passed_main_problems__']:.0f}/"
+            f"{results['__total_main_problems__']:.0f})"
+        )
+    elif DATASET == "Mind2Web":
+        print(f"  {'Element accuracy':<35s}  {results['__macro_element_acc__']:.4f}")
+        print(f"  {'Action / operation F1':<35s}  {results['__macro_action_f1__']:.4f}")
+        print(f"  {'Task success rate':<35s}  {results['__task_success_rate__']:.4f}")
+        print(f"  {'Candidate recall':<35s}  {results['__macro_candidate_recall__']:.4f}")
+        print(f"  {'Generation errors':<35s}  {results['__generation_errors__']:.0f}")
+        print(
+            f"  {'Evaluated tasks/actions':<35s}  "
+            f"{results['__n_tasks__']:.0f}/{results['__n_steps__']:.0f}"
+        )
     print("=" * 70)
 
     exec_llm = get_exec_llm_config()

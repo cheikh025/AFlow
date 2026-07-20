@@ -68,6 +68,16 @@ EXPERIMENT_CONFIGS: Dict[str, ExperimentConfig] = {
         question_type="code",
         operators=["Custom", "CustomCodeGenerate", "ScEnsemble", "Test"],
     ),
+    "SciCode": ExperimentConfig(
+        dataset="SciCode",
+        question_type="code",
+        operators=["Custom", "AnswerGenerate", "ScEnsemble", "Review", "Revise"],
+    ),
+    "Mind2Web": ExperimentConfig(
+        dataset="Mind2Web",
+        question_type="qa",
+        operators=["Custom", "AnswerGenerate", "ScEnsemble", "Review", "Revise"],
+    ),
 }
 
 
@@ -91,6 +101,12 @@ def parse_args():
     parser.add_argument("--max_rounds", type=int, default=25, help="Max iteration rounds")
     parser.add_argument("--check_convergence", type=bool, default=False, help="Whether to enable early stop")
     parser.add_argument("--validation_rounds", type=int, default=1, help="Validation rounds")
+    parser.add_argument(
+        "--api_concurrency",
+        type=int,
+        default=20,
+        help="Maximum number of concurrent execution-model API calls (default: 20)",
+    )
     parser.add_argument(
         "--token_budget",
         type=int,
@@ -121,6 +137,9 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
+    if args.api_concurrency < 1:
+        raise ValueError("--api_concurrency must be at least 1")
+
     config = EXPERIMENT_CONFIGS[args.dataset]
 
     models_config = LLMsConfig.default()
@@ -138,6 +157,12 @@ if __name__ == "__main__":
             "Please add it to the configuration file or specify a valid model using the --exec_model_name flag. "
         )
 
+    if args.dataset == "Mind2Web":
+        from benchmarks.mind2web import apply_mind2web_llm_routing
+
+        apply_mind2web_llm_routing(opt_llm_config)
+        apply_mind2web_llm_routing(exec_llm_config)
+
     download(["datasets"], force_download=args.if_force_download) # remove download initial_rounds in new version.
 
     optimizer = Optimizer(
@@ -153,6 +178,7 @@ if __name__ == "__main__":
         max_rounds=args.max_rounds,
         validation_rounds=args.validation_rounds,
         token_budget=args.token_budget,
+        api_concurrency=args.api_concurrency,
     )
 
     # Optimize workflow via setting the optimizer's mode to 'Graph'

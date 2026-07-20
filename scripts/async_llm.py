@@ -185,6 +185,9 @@ class AsyncLLM:
         self.aclient = AsyncOpenAI(api_key=self.config.key, base_url=self.config.base_url)
         self.sys_msg = system_msg
         self.usage_tracker = TokenUsageTracker()
+        # Optional shared gate used by trajectory benchmarks such as Mind2Web.
+        # Existing workflows leave it as None and retain their current behavior.
+        self.call_gate = None
         
     async def __call__(self, prompt):
         message = []
@@ -196,15 +199,22 @@ class AsyncLLM:
 
         message.append({"role": "user", "content": prompt})
 
-        response = await self.aclient.chat.completions.create(
-            model=self.config.model,
-            messages=message,
-            temperature=self.config.temperature,
-            top_p=self.config.top_p,
-            **({"extra_body": self.config.extra_body} if self.config.extra_body else {}),
-            **({"max_tokens": self.config.max_tokens} if self.config.max_tokens is not None else {}),
-            **({"seed": self.config.seed} if self.config.seed is not None else {}),
-        )
+        async def create_completion():
+            return await self.aclient.chat.completions.create(
+                model=self.config.model,
+                messages=message,
+                temperature=self.config.temperature,
+                top_p=self.config.top_p,
+                **({"extra_body": self.config.extra_body} if self.config.extra_body else {}),
+                **({"max_tokens": self.config.max_tokens} if self.config.max_tokens is not None else {}),
+                **({"seed": self.config.seed} if self.config.seed is not None else {}),
+            )
+
+        if self.call_gate is None:
+            response = await create_completion()
+        else:
+            async with self.call_gate:
+                response = await create_completion()
 
         # Extract token usage from response
         input_tokens = response.usage.prompt_tokens

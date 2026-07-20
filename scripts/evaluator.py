@@ -3,6 +3,7 @@
 # @Author  : all
 # @Desc    : Evaluation for different datasets
 
+import asyncio
 from typing import Dict, Literal, Tuple
 
 from benchmarks.benchmark import BaseBenchmark
@@ -16,9 +17,11 @@ from benchmarks.livecodebench import LiveCodeBench
 from benchmarks.mmlu import MMLUBenchmark
 from benchmarks.mmlu_pro import MMLUProBenchmark
 from benchmarks.fullstack import FullStackBenchmark
+from benchmarks.scicode import SciCodeBenchmark
+from benchmarks.mind2web import Mind2WebBenchmark, Mind2WebWorkflowFactory
 
 # If you want to customize tasks, add task types here and provide evaluation functions, just like the ones given above
-DatasetType = Literal["HumanEval", "MBPP", "GSM8K", "MATH", "HotpotQA", "DROP", "LiveCodeBench", "MMLU", "MMLUPro", "FullStack"]
+DatasetType = Literal["HumanEval", "MBPP", "GSM8K", "MATH", "HotpotQA", "DROP", "LiveCodeBench", "MMLU", "MMLUPro", "FullStack", "SciCode", "Mind2Web"]
 
 
 class Evaluator:
@@ -39,11 +42,13 @@ class Evaluator:
             "MMLU": MMLUBenchmark,
             "MMLUPro": MMLUProBenchmark,
             "FullStack": FullStackBenchmark,
+            "SciCode": SciCodeBenchmark,
+            "Mind2Web": Mind2WebBenchmark,
         }
 
     async def graph_evaluate(
         self, dataset: DatasetType, graph, params: dict, path: str, is_test: bool = False,
-        max_concurrent_tasks: int = 50, budget=None,
+        max_concurrent_tasks: int = 50, budget=None, max_api_concurrency: int = 20,
     ) -> Tuple[float, float, float]:
         if dataset not in self.dataset_configs:
             raise ValueError(f"Unsupported dataset: {dataset}")
@@ -51,21 +56,52 @@ class Evaluator:
         data_path = self._get_data_path(dataset, is_test)
         benchmark_class = self.dataset_configs[dataset]
         benchmark = benchmark_class(name=dataset, file_path=data_path, log_path=path)
+        benchmark_concurrency = getattr(benchmark, "max_concurrent_tasks", max_concurrent_tasks)
+        max_concurrent_tasks = min(max_concurrent_tasks, benchmark_concurrency)
 
         # Use params to configure the graph and benchmark
-        configured_graph = await self._configure_graph(dataset, graph, params)
+        configured_graph = await self._configure_graph(
+            dataset,
+            graph,
+            params,
+            max_api_concurrency=max_api_concurrency,
+        )
         if is_test:
             va_list = None  # For test data, generally use None to test all
         else:
             va_list = None  # Use None to test all Validation data, or set va_list (e.g., [1, 2, 3]) to use partial data
         return await benchmark.run_evaluation(configured_graph, va_list, max_concurrent_tasks, budget=budget)
 
-    async def _configure_graph(self, dataset, graph, params: dict):
+    async def _configure_graph(
+        self,
+        dataset,
+        graph,
+        params: dict,
+        max_api_concurrency: int = 20,
+    ):
         # Here you can configure the graph based on params
         # For example: set LLM configuration, dataset configuration, etc.
         dataset_config = params.get("dataset", {})
         llm_config = params.get("llm_config", {})
-        return graph(name=dataset, llm_config=llm_config, dataset=dataset_config)
+        if dataset == "Mind2Web":
+            return Mind2WebWorkflowFactory(
+                workflow_class=graph,
+                name=dataset,
+                llm_config=llm_config,
+                dataset=dataset_config,
+                max_llm_calls=max_api_concurrency,
+            )
+        configured_graph = graph(
+            name=dataset,
+            llm_config=llm_config,
+            dataset=dataset_config,
+        )
+        if not hasattr(configured_graph, "llm"):
+            raise AttributeError(
+                f"{dataset} workflow must expose its execution LLM as .llm."
+            )
+        configured_graph.llm.call_gate = asyncio.Semaphore(max_api_concurrency)
+        return configured_graph
 
     def _get_data_path(self, dataset: DatasetType, test: bool) -> str:
         base_path = f"data/datasets/{dataset.lower()}"

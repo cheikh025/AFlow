@@ -1,0 +1,22 @@
+{
+    "Custom": {
+        "description": "Generates an executable implementation for the current SciCode subproblem from the official trajectory prompt.",
+        "interface": "custom(input: str, instruction: str) -> dict with key 'response' of type str"
+    },
+    "AnswerGenerate": {
+        "description": "Generates an explicit step-by-step thought process and a final executable implementation for the current SciCode subproblem.",
+        "interface": "answer_generate(input: str) -> dict with keys 'thought' and 'answer' of type str"
+    },
+    "ScEnsemble": {
+        "description": "Selects the strongest implementation from multiple independently generated code candidates.",
+        "interface": "sc_ensemble(solutions: List[str], problem: str) -> dict with key 'response' of type str"
+    },
+    "Review": {
+        "description": "Reviews a candidate implementation for scientific correctness, dependency compliance, and exact function-signature compliance.",
+        "interface": "review(problem: str, solution: str) -> dict with keys 'review_result' and 'feedback'"
+    },
+    "Revise": {
+        "description": "Revises a candidate implementation using structured reviewer feedback.",
+        "interface": "revise(problem: str, solution: str, feedback: str) -> dict with key 'solution' of type str"
+    }
+}

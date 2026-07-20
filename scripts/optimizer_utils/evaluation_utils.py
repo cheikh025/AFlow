@@ -20,6 +20,7 @@ class EvaluationUtils:
                 {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
                 directory,
                 is_test=False,
+                max_api_concurrency=optimizer.api_concurrency,
             )
             self.total_exec_input_tokens += exec_in
             self.total_exec_output_tokens += exec_out
@@ -45,6 +46,7 @@ class EvaluationUtils:
                 directory,
                 is_test=False,
                 budget=budget,
+                max_api_concurrency=optimizer.api_concurrency,
             )
             self.total_exec_input_tokens += exec_in
             self.total_exec_output_tokens += exec_out
@@ -74,5 +76,6 @@ class EvaluationUtils:
             {"dataset": optimizer.dataset, "llm_config": optimizer.execute_llm_config},
             directory,
             is_test=is_test,
+            max_api_concurrency=optimizer.api_concurrency,
         )
         return score, avg_cost, total_cost
